@@ -427,6 +427,10 @@ function updateSendButtonState() {
 
 function stopAgent() {
   agentAbortRequested = true
+  if (agentTabId && window.electronAPI) {
+    window.electronAPI.closeTab(agentTabId)
+    agentTabId = null
+  }
   setInputEnabled(true)
   addMessage('Stopped.', 'system')
 }
@@ -442,6 +446,8 @@ function actionLabel(data) {
   if (data.action === 'type') return data.text ? `Typing "${data.text}"…` : 'Typing…'
   return 'Working…'
 }
+
+let agentTabId = null
 
 async function sendChatMessage() {
   const message = chatInput.value.trim()
@@ -470,20 +476,24 @@ async function sendChatMessage() {
       return
     }
 
+    const currentPageUrl = await window.electronAPI.getPageURL()
+    agentTabId = await window.electronAPI.createAgentTab(currentPageUrl || undefined)
+
     const planId = addPlanDisplay(planResult.plan)
 
-    await executeAgentPlan(planResult.plan, planId)
+    await executeAgentPlan(planResult.plan, planId, agentTabId)
   } catch (error) {
     removeLastLoading()
     addMessage('Error: ' + error.message, 'error')
   } finally {
     agentAbortRequested = false
+    agentTabId = null
   }
 
   setInputEnabled(true)
 }
 
-async function executeAgentPlan(plan, planId = activePlanId) {
+async function executeAgentPlan(plan, planId = activePlanId, tabId = null) {
   for (let stepIndex = 0; stepIndex < plan.steps.length; stepIndex++) {
     if (agentAbortRequested) return
     updateStep(stepIndex, 'active', '', planId)
@@ -497,8 +507,8 @@ async function executeAgentPlan(plan, planId = activePlanId) {
       actionCount++
       await delay(500)
 
-      const pageContext = await window.electronAPI.getPageContext()
-      const currentURL = await window.electronAPI.getPageURL()
+      const pageContext = await window.electronAPI.getPageContext(tabId)
+      const currentURL = await window.electronAPI.getPageURL(tabId)
 
       let stepResult
       try {
@@ -543,7 +553,7 @@ async function executeAgentPlan(plan, planId = activePlanId) {
 
       updateStep(stepIndex, 'active', actionLabel(stepResult), planId)
 
-      const execResult = await window.electronAPI.executeAction(stepResult)
+      const execResult = await window.electronAPI.executeAction(stepResult, tabId)
 
       if (!execResult.success) {
         updateStep(stepIndex, 'error', execResult.error || 'Action failed', planId)
@@ -558,7 +568,7 @@ async function executeAgentPlan(plan, planId = activePlanId) {
         text: stepResult.text
       })
 
-      await window.electronAPI.waitForLoad()
+      await window.electronAPI.waitForLoad(tabId)
     }
 
     if (!stepComplete && actionCount >= MAX_ACTIONS_PER_STEP) {
@@ -568,8 +578,8 @@ async function executeAgentPlan(plan, planId = activePlanId) {
 
   let summary = plan.goal + '. Done.'
   try {
-    const finalUrl = await window.electronAPI.getPageURL()
-    const finalPageContext = await window.electronAPI.getPageContext()
+    const finalUrl = await window.electronAPI.getPageURL(tabId)
+    const finalPageContext = await window.electronAPI.getPageContext(tabId)
     const summaryResult = await sendRequest({
       type: 'summary',
       userQuery: activeUserQuery || plan.goal,

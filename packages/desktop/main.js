@@ -11,6 +11,7 @@ let nextTabId = 1
 const TOOLBAR_HEIGHT = 128
 
 const getActiveView = () => activeTabId ? tabs.get(activeTabId)?.view : null
+const getViewForTab = (tabId) => tabId ? tabs.get(tabId)?.view : getActiveView()
 
 const updateBrowserViewBounds = () => {
   const view = getActiveView()
@@ -104,7 +105,7 @@ function wireViewEvents(tabId, view) {
   })
 }
 
-function createTab(url) {
+function createTab(url, background) {
   const tabId = nextTabId++
   const targetUrl = url || 'https://www.google.com'
 
@@ -119,7 +120,8 @@ function createTab(url) {
   tabs.set(tabId, { view, title: 'New Tab', url: targetUrl })
   wireViewEvents(tabId, view)
   view.webContents.loadURL(targetUrl)
-  switchTab(tabId)
+  if (!background) switchTab(tabId)
+  else sendTabsUpdate()
   return tabId
 }
 
@@ -196,6 +198,7 @@ const createWindow = () => {
 ipcMain.on('create-tab', (event, url) => { createTab(url || undefined) })
 ipcMain.on('close-tab', (event, tabId) => { closeTab(tabId) })
 ipcMain.on('switch-tab', (event, tabId) => { switchTab(tabId) })
+ipcMain.handle('create-agent-tab', (event, url) => createTab(url || 'https://www.google.com', true))
 
 ipcMain.on('navigate', (event, url) => {
   const view = getActiveView()
@@ -239,8 +242,8 @@ ipcMain.on('sidebar-toggled', (event, isOpen) => {
   updateBrowserViewBounds()
 })
 
-ipcMain.handle('get-page-context', async () => {
-  const view = getActiveView()
+ipcMain.handle('get-page-context', async (event, tabId) => {
+  const view = getViewForTab(tabId)
   if (!view) return { title: '', url: '', headings: [], elements: [], mainText: '' }
   try {
     const context = await view.webContents.executeJavaScript(`
@@ -313,14 +316,14 @@ ipcMain.handle('get-page-context', async () => {
   }
 })
 
-ipcMain.handle('get-page-url', async () => {
-  const view = getActiveView()
+ipcMain.handle('get-page-url', async (event, tabId) => {
+  const view = getViewForTab(tabId)
   if (!view) return ''
   return view.webContents.getURL()
 })
 
-ipcMain.handle('execute-action', async (event, action) => {
-  const view = getActiveView()
+ipcMain.handle('execute-action', async (event, action, tabId) => {
+  const view = getViewForTab(tabId)
   if (!view) return { success: false, error: 'No browser view' }
 
   try {
@@ -366,9 +369,9 @@ ipcMain.handle('execute-action', async (event, action) => {
   }
 })
 
-ipcMain.handle('wait-for-load', () => {
+ipcMain.handle('wait-for-load', (event, tabId) => {
   return new Promise((resolve) => {
-    const view = getActiveView()
+    const view = getViewForTab(tabId)
     if (!view) return resolve()
 
     if (!view.webContents.isLoading()) {

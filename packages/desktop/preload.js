@@ -15,10 +15,12 @@ contextBridge.exposeInMainWorld('electronAPI', {
   closeTab: (tabId) => ipcRenderer.send('close-tab', tabId),
   switchTab: (tabId) => ipcRenderer.send('switch-tab', tabId),
 
-  getPageContext: () => ipcRenderer.invoke('get-page-context'),
-  getPageURL: () => ipcRenderer.invoke('get-page-url'),
-  executeAction: (action) => ipcRenderer.invoke('execute-action', action),
-  waitForLoad: () => ipcRenderer.invoke('wait-for-load'),
+  createAgentTab: (url) => ipcRenderer.invoke('create-agent-tab', url),
+
+  getPageContext: (tabId) => ipcRenderer.invoke('get-page-context', tabId),
+  getPageURL: (tabId) => ipcRenderer.invoke('get-page-url', tabId),
+  executeAction: (action, tabId) => ipcRenderer.invoke('execute-action', action, tabId),
+  waitForLoad: (tabId) => ipcRenderer.invoke('wait-for-load', tabId),
 
   onNavigationStart: (callback) => ipcRenderer.on('navigation-start', callback),
   onNavigationComplete: (callback) => ipcRenderer.on('navigation-complete', (event, data) => callback(data)),
