@@ -8,31 +8,18 @@
   </head>
   <body>
     <div class="browser-container">
-      <!-- Title Bar -->
       <div class="title-bar">
         <div class="title-bar-drag-region"></div>
-        <div class="window-controls">
-          <button class="window-control close" id="closeBtn" title="Close">
-            <svg width="12" height="12" viewBox="0 0 12 12">
-              <path d="M1 1 L11 11 M11 1 L1 11" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
-            </svg>
-          </button>
-          <button class="window-control minimize" id="minimizeBtn" title="Minimize">
-            <svg width="12" height="12" viewBox="0 0 12 12">
-              <path d="M1 6 L11 6" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
-            </svg>
-          </button>
-          <button class="window-control maximize" id="maximizeBtn" title="Maximize">
-            <svg width="12" height="12" viewBox="0 0 12 12">
-              <rect x="2" y="2" width="8" height="8" fill="none" stroke="currentColor" stroke-width="1.5"/>
-            </svg>
-          </button>
-        </div>
       </div>
 
       <!-- Toolbar -->
       <div class="toolbar">
         <div class="nav-buttons">
+          <button class="nav-btn" id="sidebarToggle" title="Toggle Sidebar">
+            <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
+              <path d="M2 4 L14 4 M2 8 L14 8 M2 12 L14 12" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
+            </svg>
+          </button>
           <button class="nav-btn" id="backBtn" title="Back" disabled>
             <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
               <path d="M10 12 L6 8 L10 4" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
@@ -67,6 +54,40 @@
               <div class="spinner"></div>
             </div>
           </div>
+        </div>
+      </div>
+
+      <!-- Sidebar -->
+      <div class="sidebar" id="sidebar">
+        <div class="sidebar-header">
+          <h3>AI Agent</h3>
+          <button class="sidebar-close" id="sidebarCloseBtn">
+            <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
+              <path d="M4 4 L12 12 M12 4 L4 12" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
+            </svg>
+          </button>
+        </div>
+        <div class="chat-messages" id="chatMessages"></div>
+        <div class="chat-input-container">
+          <input 
+            type="text" 
+            id="chatInput" 
+            class="chat-input" 
+            placeholder="What should I do?"
+            spellcheck="true"
+          />
+          <button class="chat-send-btn" id="chatSendBtn" title="Send">
+            <span class="chat-send-icon">
+              <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
+                <path d="M2 8 L14 8 M9 3 L14 8 L9 13" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+              </svg>
+            </span>
+            <span class="chat-stop-icon" style="display: none;">
+              <svg width="14" height="14" viewBox="0 0 14 14" fill="currentColor">
+                <rect x="2" y="2" width="10" height="10" rx="2"/>
+              </svg>
+            </span>
+          </button>
         </div>
       </div>
     </div>
