@@ -430,6 +430,7 @@ function stopAgent() {
   if (agentTabId && window.electronAPI) {
     window.electronAPI.closeTab(agentTabId)
     agentTabId = null
+    updateAgentOverlay()
   }
   setInputEnabled(true)
   addMessage('Stopped.', 'system')
@@ -476,8 +477,7 @@ async function sendChatMessage() {
       return
     }
 
-    const currentPageUrl = await window.electronAPI.getPageURL()
-    agentTabId = await window.electronAPI.createAgentTab(currentPageUrl || undefined)
+    agentTabId = await window.electronAPI.createAgentTab()
 
     const planId = addPlanDisplay(planResult.plan)
 
@@ -487,7 +487,11 @@ async function sendChatMessage() {
     addMessage('Error: ' + error.message, 'error')
   } finally {
     agentAbortRequested = false
+    if (agentTabId && window.electronAPI) {
+      window.electronAPI.stopAgentControl(agentTabId)
+    }
     agentTabId = null
+    updateAgentOverlay()
   }
 
   setInputEnabled(true)
@@ -647,11 +651,23 @@ if (window.electronAPI) {
   })
 }
 
+const agentBorderOverlay = document.getElementById('agentBorderOverlay')
+const agentToast = document.getElementById('agentToast')
+
+function updateAgentOverlay() {
+  const isOnAgentTab = agentTabId && activeTabId === agentTabId
+  agentBorderOverlay.classList.toggle('visible', !!isOnAgentTab)
+  agentToast.classList.toggle('visible', !!isOnAgentTab)
+}
+
 function renderTabs() {
   tabList.innerHTML = ''
   tabsState.forEach(tab => {
     const el = document.createElement('div')
-    el.className = 'tab' + (tab.id === activeTabId ? ' active' : '')
+    let cls = 'tab'
+    if (tab.id === activeTabId) cls += ' active'
+    if (tab.id === agentTabId) cls += ' agent-tab'
+    el.className = cls
     el.dataset.tabId = tab.id
 
     const title = document.createElement('span')
@@ -674,6 +690,7 @@ function renderTabs() {
 
     tabList.appendChild(el)
   })
+  updateAgentOverlay()
 }
 
 newTabBtn.addEventListener('click', () => {

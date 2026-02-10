@@ -18,11 +18,16 @@ const updateBrowserViewBounds = () => {
   if (!mainWindow || !view) return
   const bounds = mainWindow.getContentBounds()
   const sidebarWidth = sidebarOpen ? 400 : 0
+  
+  const activeTab = tabs.get(activeTabId)
+  const isAgent = activeTab?.isAgent
+  const borderWidth = isAgent ? 6 : 0
+
   view.setBounds({
-    x: 0,
-    y: TOOLBAR_HEIGHT,
-    width: bounds.width - sidebarWidth,
-    height: bounds.height - TOOLBAR_HEIGHT
+    x: borderWidth,
+    y: TOOLBAR_HEIGHT + borderWidth,
+    width: bounds.width - sidebarWidth - (borderWidth * 2),
+    height: bounds.height - TOOLBAR_HEIGHT - (borderWidth * 2)
   })
 }
 
@@ -56,6 +61,51 @@ function wireViewEvents(tabId, view) {
         canGoBack: view.webContents.canGoBack(),
         canGoForward: view.webContents.canGoForward()
       })
+    }
+    
+    if (tab && tab.isAgent) {
+      view.webContents.insertCSS(`
+        #agent-toast-pill {
+          position: fixed;
+          top: 24px;
+          left: 50%;
+          transform: translateX(-50%);
+          z-index: 2147483647;
+          padding: 8px 24px;
+          border-radius: 30px;
+          background: linear-gradient(135deg, #6366f1, #8b5cf6);
+          color: white;
+          font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+          font-size: 13px;
+          font-weight: 500;
+          letter-spacing: 0.3px;
+          box-shadow: 0 4px 20px rgba(139, 92, 246, 0.4);
+          border: 1px solid rgba(255, 255, 255, 0.2);
+          backdrop-filter: blur(8px);
+          pointer-events: none;
+          opacity: 0;
+          transition: opacity 0.4s cubic-bezier(0.2, 0.8, 0.2, 1);
+          animation: agent-float 3s ease-in-out infinite;
+        }
+        #agent-toast-pill.visible {
+          opacity: 1;
+        }
+        @keyframes agent-float {
+          0%, 100% { transform: translate(-50%, 0); }
+          50% { transform: translate(-50%, -6px); }
+        }
+      `)
+      view.webContents.executeJavaScript(`
+        if (!document.getElementById('agent-toast-pill')) {
+          const el = document.createElement('div');
+          el.id = 'agent-toast-pill';
+          el.textContent = 'AI Assistant is working...';
+          document.body.appendChild(el);
+          // Force reflow
+          void el.offsetWidth;
+          el.classList.add('visible');
+        }
+      `)
     }
   })
 
@@ -105,9 +155,11 @@ function wireViewEvents(tabId, view) {
   })
 }
 
-function createTab(url, background) {
+function createTab(url, options = {}) {
   const tabId = nextTabId++
   const targetUrl = url || 'https://www.google.com'
+  const isAgent = options.isAgent || false
+  const background = options.background || false
 
   const view = new BrowserView({
     webPreferences: {
@@ -117,7 +169,7 @@ function createTab(url, background) {
     }
   })
 
-  tabs.set(tabId, { view, title: 'New Tab', url: targetUrl })
+  tabs.set(tabId, { view, title: 'New Tab', url: targetUrl, isAgent })
   wireViewEvents(tabId, view)
   view.webContents.loadURL(targetUrl)
   if (!background) switchTab(tabId)
@@ -198,7 +250,21 @@ const createWindow = () => {
 ipcMain.on('create-tab', (event, url) => { createTab(url || undefined) })
 ipcMain.on('close-tab', (event, tabId) => { closeTab(tabId) })
 ipcMain.on('switch-tab', (event, tabId) => { switchTab(tabId) })
-ipcMain.handle('create-agent-tab', (event, url) => createTab(url || 'https://www.google.com', true))
+ipcMain.handle('create-agent-tab', (event, url) => createTab(url || 'https://www.google.com', { isAgent: true, background: false }))
+
+ipcMain.on('stop-agent-control', (event, tabId) => {
+  const tab = tabs.get(tabId)
+  if (tab && tab.isAgent) {
+    tab.isAgent = false
+    tab.view.webContents.executeJavaScript(`
+      (function() {
+        const el = document.getElementById('agent-toast-pill');
+        if (el) el.remove();
+      })()
+    `).catch(() => {})
+    updateBrowserViewBounds()
+  }
+})
 
 ipcMain.on('navigate', (event, url) => {
   const view = getActiveView()
