@@ -11,6 +11,10 @@ contextBridge.exposeInMainWorld('electronAPI', {
   sidebarToggled: (isOpen) => ipcRenderer.send('sidebar-toggled', isOpen),
   getNavigationState: () => ipcRenderer.send('get-navigation-state'),
 
+  createTab: (url) => ipcRenderer.send('create-tab', url),
+  closeTab: (tabId) => ipcRenderer.send('close-tab', tabId),
+  switchTab: (tabId) => ipcRenderer.send('switch-tab', tabId),
+
   getPageContext: () => ipcRenderer.invoke('get-page-context'),
   getPageURL: () => ipcRenderer.invoke('get-page-url'),
   executeAction: (action) => ipcRenderer.invoke('execute-action', action),
@@ -22,6 +26,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   onUrlChanged: (callback) => ipcRenderer.on('url-changed', (event, data) => callback(data)),
   onNavigationStateChanged: (callback) => ipcRenderer.on('navigation-state-changed', (event, data) => callback(data)),
   onOpenSidebar: (callback) => ipcRenderer.on('open-sidebar', callback),
+  onTabsUpdated: (callback) => ipcRenderer.on('tabs-updated', (event, data) => callback(data)),
 
   removeAllListeners: (channel) => ipcRenderer.removeAllListeners(channel)
 })

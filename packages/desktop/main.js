@@ -2,20 +2,170 @@ const { app, BrowserWindow, BrowserView, ipcMain, globalShortcut } = require('el
 const path = require('path')
 
 let mainWindow
-let browserView
 let sidebarOpen = false
 
+const tabs = new Map()
+let activeTabId = null
+let nextTabId = 1
+
+const TOOLBAR_HEIGHT = 128
+
+const getActiveView = () => activeTabId ? tabs.get(activeTabId)?.view : null
+
 const updateBrowserViewBounds = () => {
-  if (!mainWindow || !browserView) return
+  const view = getActiveView()
+  if (!mainWindow || !view) return
   const bounds = mainWindow.getContentBounds()
-  const toolbarHeight = 90
   const sidebarWidth = sidebarOpen ? 400 : 0
-  browserView.setBounds({
+  view.setBounds({
     x: 0,
-    y: toolbarHeight,
+    y: TOOLBAR_HEIGHT,
     width: bounds.width - sidebarWidth,
-    height: bounds.height - toolbarHeight
+    height: bounds.height - TOOLBAR_HEIGHT
   })
+}
+
+function sendTabsUpdate() {
+  if (!mainWindow) return
+  const tabList = []
+  for (const [id, tab] of tabs) {
+    tabList.push({ id, title: tab.title, url: tab.url })
+  }
+  mainWindow.webContents.send('tabs-updated', { tabs: tabList, activeTabId })
+}
+
+function wireViewEvents(tabId, view) {
+  view.webContents.on('did-start-loading', () => {
+    if (tabId === activeTabId && mainWindow) {
+      mainWindow.webContents.send('navigation-start')
+    }
+  })
+
+  view.webContents.on('did-finish-load', () => {
+    const tab = tabs.get(tabId)
+    if (tab) {
+      tab.url = view.webContents.getURL()
+      tab.title = view.webContents.getTitle() || tab.url
+      sendTabsUpdate()
+    }
+    if (tabId === activeTabId && mainWindow) {
+      mainWindow.webContents.send('navigation-complete', {
+        url: view.webContents.getURL(),
+        title: view.webContents.getTitle(),
+        canGoBack: view.webContents.canGoBack(),
+        canGoForward: view.webContents.canGoForward()
+      })
+    }
+  })
+
+  view.webContents.on('did-fail-load', (event, errorCode, errorDescription) => {
+    if (tabId === activeTabId && mainWindow) {
+      mainWindow.webContents.send('navigation-error', { errorCode, errorDescription })
+    }
+  })
+
+  view.webContents.on('did-navigate', (event, url) => {
+    const tab = tabs.get(tabId)
+    if (tab) {
+      tab.url = url
+      tab.title = view.webContents.getTitle() || url
+      sendTabsUpdate()
+    }
+    if (tabId === activeTabId && mainWindow) {
+      mainWindow.webContents.send('url-changed', {
+        url,
+        canGoBack: view.webContents.canGoBack(),
+        canGoForward: view.webContents.canGoForward()
+      })
+    }
+  })
+
+  view.webContents.on('did-navigate-in-page', (event, url) => {
+    const tab = tabs.get(tabId)
+    if (tab) {
+      tab.url = url
+      sendTabsUpdate()
+    }
+    if (tabId === activeTabId && mainWindow) {
+      mainWindow.webContents.send('url-changed', {
+        url,
+        canGoBack: view.webContents.canGoBack(),
+        canGoForward: view.webContents.canGoForward()
+      })
+    }
+  })
+
+  view.webContents.on('page-title-updated', (event, title) => {
+    const tab = tabs.get(tabId)
+    if (tab) {
+      tab.title = title
+      sendTabsUpdate()
+    }
+  })
+}
+
+function createTab(url) {
+  const tabId = nextTabId++
+  const targetUrl = url || 'https://www.google.com'
+
+  const view = new BrowserView({
+    webPreferences: {
+      nodeIntegration: false,
+      contextIsolation: true,
+      webSecurity: true
+    }
+  })
+
+  tabs.set(tabId, { view, title: 'New Tab', url: targetUrl })
+  wireViewEvents(tabId, view)
+  view.webContents.loadURL(targetUrl)
+  switchTab(tabId)
+  return tabId
+}
+
+function switchTab(tabId) {
+  if (!tabs.has(tabId) || !mainWindow) return
+
+  if (activeTabId && tabs.has(activeTabId)) {
+    mainWindow.removeBrowserView(tabs.get(activeTabId).view)
+  }
+
+  activeTabId = tabId
+  const tab = tabs.get(tabId)
+  mainWindow.addBrowserView(tab.view)
+  updateBrowserViewBounds()
+  sendTabsUpdate()
+
+  mainWindow.webContents.send('url-changed', {
+    url: tab.view.webContents.getURL() || tab.url,
+    canGoBack: tab.view.webContents.canGoBack(),
+    canGoForward: tab.view.webContents.canGoForward()
+  })
+}
+
+function closeTab(tabId) {
+  if (!tabs.has(tabId)) return
+
+  const tab = tabs.get(tabId)
+  if (activeTabId === tabId) {
+    mainWindow.removeBrowserView(tab.view)
+  }
+
+  tab.view.webContents.close()
+  tabs.delete(tabId)
+
+  if (tabs.size === 0) {
+    activeTabId = null
+    createTab()
+    return
+  }
+
+  if (activeTabId === tabId) {
+    const ids = [...tabs.keys()]
+    switchTab(ids[ids.length - 1])
+  } else {
+    sendTabsUpdate()
+  }
 }
 
 const createWindow = () => {
@@ -35,67 +185,21 @@ const createWindow = () => {
 
   mainWindow.loadFile('index.html').then(() => {
     mainWindow.maximize()
+    createTab()
   })
-
-  browserView = new BrowserView({
-    webPreferences: {
-      nodeIntegration: false,
-      contextIsolation: true,
-      webSecurity: true
-    }
-  })
-
-  mainWindow.setBrowserView(browserView)
-
-  const bounds = mainWindow.getBounds()
-  browserView.setBounds({
-    x: 0,
-    y: 90,
-    width: bounds.width,
-    height: bounds.height - 90
-  })
-
-  browserView.webContents.loadURL('https://www.google.com')
 
   mainWindow.on('resize', updateBrowserViewBounds)
   mainWindow.on('maximize', updateBrowserViewBounds)
   mainWindow.on('unmaximize', updateBrowserViewBounds)
-
-  browserView.webContents.on('did-start-loading', () => {
-    mainWindow.webContents.send('navigation-start')
-  })
-
-  browserView.webContents.on('did-finish-load', () => {
-    const url = browserView.webContents.getURL()
-    const title = browserView.webContents.getTitle()
-    const canGoBack = browserView.webContents.canGoBack()
-    const canGoForward = browserView.webContents.canGoForward()
-    mainWindow.webContents.send('navigation-complete', { url, title, canGoBack, canGoForward })
-  })
-
-  browserView.webContents.on('did-fail-load', (event, errorCode, errorDescription) => {
-    mainWindow.webContents.send('navigation-error', { errorCode, errorDescription })
-  })
-
-  browserView.webContents.on('did-navigate', (event, url) => {
-    mainWindow.webContents.send('url-changed', {
-      url,
-      canGoBack: browserView.webContents.canGoBack(),
-      canGoForward: browserView.webContents.canGoForward()
-    })
-  })
-
-  browserView.webContents.on('did-navigate-in-page', (event, url) => {
-    mainWindow.webContents.send('url-changed', {
-      url,
-      canGoBack: browserView.webContents.canGoBack(),
-      canGoForward: browserView.webContents.canGoForward()
-    })
-  })
 }
 
+ipcMain.on('create-tab', (event, url) => { createTab(url || undefined) })
+ipcMain.on('close-tab', (event, tabId) => { closeTab(tabId) })
+ipcMain.on('switch-tab', (event, tabId) => { switchTab(tabId) })
+
 ipcMain.on('navigate', (event, url) => {
-  if (!browserView) return
+  const view = getActiveView()
+  if (!view) return
   let targetUrl = url
   if (!url.startsWith('http://') && !url.startsWith('https://')) {
     if (url.includes('.') && !url.includes(' ')) {
@@ -104,21 +208,22 @@ ipcMain.on('navigate', (event, url) => {
       targetUrl = 'https://www.google.com/search?q=' + encodeURIComponent(url)
     }
   }
-  browserView.webContents.loadURL(targetUrl)
+  view.webContents.loadURL(targetUrl)
 })
 
 ipcMain.on('get-navigation-state', () => {
-  if (mainWindow && browserView) {
+  const view = getActiveView()
+  if (mainWindow && view) {
     mainWindow.webContents.send('navigation-state-changed', {
-      canGoBack: browserView.webContents.canGoBack(),
-      canGoForward: browserView.webContents.canGoForward()
+      canGoBack: view.webContents.canGoBack(),
+      canGoForward: view.webContents.canGoForward()
     })
   }
 })
 
-ipcMain.on('go-back', () => { if (browserView) browserView.webContents.goBack() })
-ipcMain.on('go-forward', () => { if (browserView) browserView.webContents.goForward() })
-ipcMain.on('reload', () => { if (browserView) browserView.webContents.reload() })
+ipcMain.on('go-back', () => { const v = getActiveView(); if (v) v.webContents.goBack() })
+ipcMain.on('go-forward', () => { const v = getActiveView(); if (v) v.webContents.goForward() })
+ipcMain.on('reload', () => { const v = getActiveView(); if (v) v.webContents.reload() })
 ipcMain.on('close-window', () => { if (mainWindow) mainWindow.close() })
 ipcMain.on('minimize-window', () => { if (mainWindow) mainWindow.minimize() })
 
@@ -135,21 +240,10 @@ ipcMain.on('sidebar-toggled', (event, isOpen) => {
 })
 
 ipcMain.handle('get-page-context', async () => {
-  if (!browserView) return { title: '', url: '', headings: [], elements: [], mainText: '' }
+  const view = getActiveView()
+  if (!view) return { title: '', url: '', headings: [], elements: [], mainText: '' }
   try {
-    const context = await browserView.webContents.executeJavaScript(`
-      /* Page context sent to Gemini – what is included and trimmed:
-       * INCLUDED: Only interactive elements matching: a[href], button, input, textarea, select,
-       *   [role="button"], [role="link"], [role="tab"], [type="submit"], [onclick].
-       * TRIMMED OUT: script, style, iframes, full HTML, non-interactive nodes, invisible elements
-       *   (rect width/height 0), disabled elements, input type="hidden".
-       * PER ELEMENT we send only: id (our index), tag, type, name, id (DOM id), placeholder,
-       *   href, aria-label, title, role, value (for input/textarea), text (innerText up to 80 chars).
-       * TRIMMED: classes, data-* (except we set data-ai-id), child HTML, computed styles, events.
-       * HEADINGS: h1/h2/h3 text only, up to 10 headings, each truncated to 100 chars.
-       * VISIBLE TEXT EXCERPT: we also include a short plain-text excerpt from the main content area
-       *   (main/article/#main/#content/body), trimmed to 4000 characters, whitespace collapsed.
-       * CAP: 200 interactive elements max. */
+    const context = await view.webContents.executeJavaScript(`
       (function() {
         var elements = [];
         var id = 0;
@@ -220,22 +314,24 @@ ipcMain.handle('get-page-context', async () => {
 })
 
 ipcMain.handle('get-page-url', async () => {
-  if (!browserView) return ''
-  return browserView.webContents.getURL()
+  const view = getActiveView()
+  if (!view) return ''
+  return view.webContents.getURL()
 })
 
 ipcMain.handle('execute-action', async (event, action) => {
-  if (!browserView) return { success: false, error: 'No browser view' }
+  const view = getActiveView()
+  if (!view) return { success: false, error: 'No browser view' }
 
   try {
     if (action.action === 'navigate') {
-      await browserView.webContents.loadURL(action.url)
+      await view.webContents.loadURL(action.url)
       return { success: true }
     }
 
     if (action.action === 'click') {
       const eid = Number(action.elementId)
-      const result = await browserView.webContents.executeJavaScript(`
+      const result = await view.webContents.executeJavaScript(`
         (function() {
           var el = document.querySelector('[data-ai-id="${eid}"]');
           if (el) { el.click(); return true; }
@@ -248,7 +344,7 @@ ipcMain.handle('execute-action', async (event, action) => {
     if (action.action === 'type') {
       const eid = Number(action.elementId)
       const text = JSON.stringify(action.text)
-      const result = await browserView.webContents.executeJavaScript(`
+      const result = await view.webContents.executeJavaScript(`
         (function() {
           var el = document.querySelector('[data-ai-id="${eid}"]');
           if (el) {
@@ -272,16 +368,17 @@ ipcMain.handle('execute-action', async (event, action) => {
 
 ipcMain.handle('wait-for-load', () => {
   return new Promise((resolve) => {
-    if (!browserView) return resolve()
+    const view = getActiveView()
+    if (!view) return resolve()
 
-    if (!browserView.webContents.isLoading()) {
+    if (!view.webContents.isLoading()) {
       setTimeout(resolve, 1500)
       return
     }
 
     const timeout = setTimeout(resolve, 10000)
 
-    browserView.webContents.once('did-finish-load', () => {
+    view.webContents.once('did-finish-load', () => {
       clearTimeout(timeout)
       setTimeout(resolve, 1500)
     })

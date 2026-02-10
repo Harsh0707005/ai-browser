@@ -9,8 +9,12 @@ const sidebarCloseBtn = document.getElementById('sidebarCloseBtn')
 const chatInput = document.getElementById('chatInput')
 const chatSendBtn = document.getElementById('chatSendBtn')
 const chatMessages = document.getElementById('chatMessages')
+const tabList = document.getElementById('tabList')
+const newTabBtn = document.getElementById('newTabBtn')
 
 let currentUrl = 'https://www.google.com'
+let tabsState = []
+let activeTabId = null
 let sidebarOpen = false
 let agentRunning = false
 let agentAbortRequested = false
@@ -632,6 +636,58 @@ if (window.electronAPI) {
     updateNavigationButtons(data.canGoBack, data.canGoForward)
   })
 }
+
+function renderTabs() {
+  tabList.innerHTML = ''
+  tabsState.forEach(tab => {
+    const el = document.createElement('div')
+    el.className = 'tab' + (tab.id === activeTabId ? ' active' : '')
+    el.dataset.tabId = tab.id
+
+    const title = document.createElement('span')
+    title.className = 'tab-title'
+    title.textContent = tab.title || 'New Tab'
+    el.appendChild(title)
+
+    const close = document.createElement('button')
+    close.className = 'tab-close'
+    close.innerHTML = '<svg width="10" height="10" viewBox="0 0 10 10" fill="none"><path d="M2 2 L8 8 M8 2 L2 8" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>'
+    close.addEventListener('click', (e) => {
+      e.stopPropagation()
+      if (window.electronAPI) window.electronAPI.closeTab(tab.id)
+    })
+    el.appendChild(close)
+
+    el.addEventListener('click', () => {
+      if (window.electronAPI) window.electronAPI.switchTab(tab.id)
+    })
+
+    tabList.appendChild(el)
+  })
+}
+
+newTabBtn.addEventListener('click', () => {
+  if (window.electronAPI) window.electronAPI.createTab()
+})
+
+if (window.electronAPI) {
+  window.electronAPI.onTabsUpdated((data) => {
+    tabsState = data.tabs
+    activeTabId = data.activeTabId
+    renderTabs()
+  })
+}
+
+document.addEventListener('keydown', (e) => {
+  if ((e.metaKey || e.ctrlKey) && e.key === 't') {
+    e.preventDefault()
+    if (window.electronAPI) window.electronAPI.createTab()
+  }
+  if ((e.metaKey || e.ctrlKey) && e.key === 'w') {
+    e.preventDefault()
+    if (activeTabId && window.electronAPI) window.electronAPI.closeTab(activeTabId)
+  }
+})
 
 addressInput.value = currentUrl
 if (window.electronAPI) setTimeout(() => { window.electronAPI.getNavigationState() }, 500)
