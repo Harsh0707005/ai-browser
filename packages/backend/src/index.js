@@ -90,19 +90,28 @@ async function handlePlan(message, conversationContext) {
     ? `PREVIOUS CONVERSATION CONTEXT (user may be answering a follow-up or continuing):\n${conversationContext.trim()}\n\nCURRENT USER MESSAGE: `
     : 'USER REQUEST: '
 
-  const prompt = `You are an AI browser automation agent. Break down this user request into step-by-step browser actions.
+  const prompt = `You are an AI browser assistant. First decide: does this request NEED web browsing, or can you answer it directly?
 ${contextBlock}"${message}"
 
-Each step has a "group" number. Steps within the same group execute in PARALLEL (each in its own browser tab simultaneously). Steps in different groups execute SEQUENTIALLY (lower group finishes before the next group starts).
+ANSWER DIRECTLY (no browsing) when:
+- Greetings, casual conversation, or chitchat
+- The user provides text and asks you to summarize, explain, rewrite, or analyze it
+- General knowledge questions you can confidently answer
+- Follow-ups about previous results that don't need new browsing
+- Anything that does NOT require visiting a website, searching the web, or interacting with a page
 
-When to use the same group (parallel): Steps that are completely independent of each other — they don't need results, page state, or context from one another. For instance, gathering information from two separate websites at the same time.
+USE BROWSING when:
+- The user wants to visit, search, or look something up on the web
+- The request needs live/current information from websites
+- The user wants to interact with a specific site (click, fill forms, etc.)
+- Price comparisons, product searches, or anything requiring real web data
 
-When to use different groups (sequential): A step depends on the outcome, page state, or navigation result of a prior step. For instance, you must first navigate to a site before you can interact with elements on it.
+If you can answer directly, respond with:
+{"type": "direct", "response": "your helpful answer here"}
 
-If the entire task is a linear chain of dependent actions, every step should have a unique group number. Only combine steps into the same group when they are truly independent and can run on separate tabs without interfering.
-
-Respond with ONLY this JSON structure:
+If browsing is needed, respond with:
 {
+  "type": "plan",
   "goal": "concise summary of end goal",
   "steps": [
     {"step": 1, "group": 1, "description": "Navigate to example.com and do X"},
@@ -111,7 +120,10 @@ Respond with ONLY this JSON structure:
   ]
 }
 
-Rules:
+Plan rules (only when type is "plan"):
+- Each step has a "group" number. Steps within the same group execute in PARALLEL (each in its own browser tab simultaneously). Steps in different groups execute SEQUENTIALLY (lower group finishes before the next group starts).
+- Use the same group for steps that are completely independent of each other. Use different groups when a step depends on a prior step's outcome.
+- If the entire task is a linear chain of dependent actions, every step should have a unique group number.
 - Each step = a self-contained browser task (may involve navigation + interactions on that page)
 - Parallel steps (same group) must each be fully self-contained — include their own navigation since they run in separate tabs
 - Be specific: say exactly what to click, what to type, where to go
@@ -122,7 +134,17 @@ Rules:
   const text = await callGemini(prompt)
   const parsed = parseGeminiJSON(text)
 
+  if (parsed && parsed.type === 'direct' && parsed.response) {
+    console.log(`[PLAN] Direct answer: ${parsed.response.substring(0, 80)}...`)
+    return { success: true, direct: true, response: parsed.response }
+  }
+
   if (parsed && parsed.steps) {
+    console.log(`[PLAN] ${parsed.steps.length} steps: ${parsed.goal}`)
+    return { success: true, plan: parsed }
+  }
+
+  if (parsed && parsed.type === 'plan' && parsed.steps) {
     console.log(`[PLAN] ${parsed.steps.length} steps: ${parsed.goal}`)
     return { success: true, plan: parsed }
   }

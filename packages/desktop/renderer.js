@@ -274,7 +274,7 @@ function renderMarkdown(md) {
   return text
 }
 
-function addMessage(text, type) {
+function addMessage(text, type, reference) {
   const div = document.createElement('div')
   div.className = 'chat-message ' + type
   if (type === 'assistant') {
@@ -282,6 +282,13 @@ function addMessage(text, type) {
     div.innerHTML = renderMarkdown(text)
   } else {
     div.textContent = text
+  }
+  if (reference && type === 'user') {
+    const tag = document.createElement('div')
+    tag.className = 'chat-reference-tag'
+    const truncated = reference.length > 200 ? reference.substring(0, 200) + '...' : reference
+    tag.textContent = truncated
+    div.appendChild(tag)
   }
   chatMessages.appendChild(div)
   smoothScrollToBottom()
@@ -479,8 +486,16 @@ function groupStepsByGroup(steps) {
 }
 
 async function sendChatMessage() {
-  const message = chatInput.value.trim()
-  if (!message || agentRunning) return
+  const rawMessage = chatInput.value.trim()
+  if (!rawMessage || agentRunning) return
+
+  let message = rawMessage
+  let currentReference = null
+  if (referenceText) {
+    currentReference = referenceText
+    message = 'User query: ' + rawMessage + '\n\nTagged reference context:\n"' + referenceText + '"'
+    setReference('')
+  }
 
   agentAbortRequested = false
   activeUserQuery = message
@@ -489,7 +504,7 @@ async function sendChatMessage() {
   chatInput.value = ''
 
   conversationHistory.push({ role: 'user', content: message })
-  addMessage(message, 'user')
+  addMessage(rawMessage, 'user', currentReference)
   addMessage('Planning...', 'loading')
 
   try {
@@ -499,8 +514,22 @@ async function sendChatMessage() {
     removeLastLoading()
 
     if (agentAbortRequested) return
-    if (!planResult.success || !planResult.plan) {
-      addMessage(planResult.error || 'Failed to create plan', 'error')
+    if (!planResult.success) {
+      addMessage(planResult.error || 'Failed to process request', 'error')
+      setInputEnabled(true)
+      return
+    }
+
+    if (planResult.direct) {
+      const reply = planResult.response || ''
+      conversationHistory.push({ role: 'assistant', content: reply })
+      addMessage(reply, 'assistant')
+      setInputEnabled(true)
+      return
+    }
+
+    if (!planResult.plan) {
+      addMessage('Failed to create plan', 'error')
       setInputEnabled(true)
       return
     }
@@ -698,6 +727,46 @@ if (window.electronAPI) {
 
   window.electronAPI.onNavigationStateChanged((data) => {
     updateNavigationButtons(data.canGoBack, data.canGoForward)
+  })
+}
+
+const referenceContainer = document.getElementById('referenceContainer')
+let referenceText = ''
+
+function setReference(text) {
+  referenceText = text
+  if (!text) {
+    referenceContainer.innerHTML = ''
+    referenceContainer.classList.remove('visible')
+    return
+  }
+  referenceContainer.classList.add('visible')
+  const truncated = text.length > 300 ? text.substring(0, 300) + '...' : text
+  const chip = document.createElement('div')
+  chip.className = 'reference-chip'
+  const textDiv = document.createElement('div')
+  textDiv.className = 'reference-text'
+  textDiv.textContent = truncated
+  const closeBtn = document.createElement('button')
+  closeBtn.className = 'reference-close'
+  closeBtn.innerHTML = '&times;'
+  closeBtn.addEventListener('click', () => setReference(''))
+  chip.appendChild(textDiv)
+  chip.appendChild(closeBtn)
+  referenceContainer.innerHTML = ''
+  referenceContainer.appendChild(chip)
+}
+
+if (window.electronAPI) {
+  window.electronAPI.onSelectionAction((data) => {
+    if (data.type === 'summarize') {
+      openSidebarAndFocus()
+      chatInput.value = 'Summarize this:\n\n' + data.text
+      sendChatMessage()
+    } else if (data.type === 'ask') {
+      setReference(data.text)
+      openSidebarAndFocus()
+    }
   })
 }
 

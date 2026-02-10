@@ -63,6 +63,92 @@ function wireViewEvents(tabId, view) {
       })
     }
     
+    view.webContents.insertCSS(`
+      #ai-sel-popup {
+        position: fixed;
+        z-index: 2147483646;
+        background: #1a1a1a;
+        border: 1px solid #444;
+        border-radius: 10px;
+        padding: 4px;
+        display: flex;
+        gap: 2px;
+        box-shadow: 0 4px 20px rgba(0,0,0,0.5);
+        font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+        opacity: 0;
+        pointer-events: none;
+        transition: opacity 0.15s ease;
+      }
+      #ai-sel-popup.visible {
+        opacity: 1;
+        pointer-events: auto;
+      }
+      #ai-sel-popup button {
+        background: transparent;
+        border: none;
+        color: #e0e0e0;
+        padding: 6px 14px;
+        border-radius: 7px;
+        font-size: 12px;
+        font-weight: 500;
+        cursor: pointer;
+        white-space: nowrap;
+        transition: background 0.15s;
+      }
+      #ai-sel-popup button:hover {
+        background: #333;
+      }
+    `)
+    view.webContents.executeJavaScript(`
+      (function() {
+        if (document.getElementById('ai-sel-popup')) return;
+        var popup = document.createElement('div');
+        popup.id = 'ai-sel-popup';
+        var btnS = document.createElement('button');
+        btnS.textContent = 'Summarize';
+        var btnA = document.createElement('button');
+        btnA.textContent = 'Ask';
+        popup.appendChild(btnS);
+        popup.appendChild(btnA);
+        document.body.appendChild(popup);
+        var selText = '';
+        function hide() { popup.classList.remove('visible'); }
+        function show(x, y) {
+          popup.style.left = x + 'px';
+          popup.style.top = y + 'px';
+          popup.classList.add('visible');
+        }
+        document.addEventListener('mouseup', function(e) {
+          if (popup.contains(e.target)) return;
+          setTimeout(function() {
+            var sel = window.getSelection();
+            var t = (sel ? sel.toString() : '').trim();
+            if (t.length > 3) {
+              selText = t;
+              var range = sel.getRangeAt(0);
+              var rect = range.getBoundingClientRect();
+              var px = Math.min(rect.left + rect.width / 2 - 70, window.innerWidth - 180);
+              var py = rect.top - 44;
+              if (py < 8) py = rect.bottom + 8;
+              show(Math.max(8, px), py);
+            } else { hide(); }
+          }, 10);
+        });
+        document.addEventListener('mousedown', function(e) {
+          if (!popup.contains(e.target)) hide();
+        });
+        document.addEventListener('scroll', hide, true);
+        btnS.addEventListener('click', function() {
+          console.log('__AI_ACTION__:' + JSON.stringify({ type: 'summarize', text: selText }));
+          hide(); window.getSelection().removeAllRanges();
+        });
+        btnA.addEventListener('click', function() {
+          console.log('__AI_ACTION__:' + JSON.stringify({ type: 'ask', text: selText }));
+          hide(); window.getSelection().removeAllRanges();
+        });
+      })()
+    `)
+
     if (tab && tab.isAgent) {
       view.webContents.insertCSS(`
         #agent-toast-pill {
@@ -143,6 +229,18 @@ function wireViewEvents(tabId, view) {
         canGoBack: view.webContents.canGoBack(),
         canGoForward: view.webContents.canGoForward()
       })
+    }
+  })
+
+  view.webContents.on('console-message', (event, level, message) => {
+    if (message.startsWith('__AI_ACTION__:')) {
+      try {
+        const data = JSON.parse(message.substring('__AI_ACTION__:'.length))
+        if (mainWindow) {
+          mainWindow.webContents.send('selection-action', data)
+          mainWindow.webContents.focus()
+        }
+      } catch (e) {}
     }
   })
 

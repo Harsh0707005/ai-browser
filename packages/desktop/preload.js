@@ -30,6 +30,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   onNavigationStateChanged: (callback) => ipcRenderer.on('navigation-state-changed', (event, data) => callback(data)),
   onOpenSidebar: (callback) => ipcRenderer.on('open-sidebar', callback),
   onTabsUpdated: (callback) => ipcRenderer.on('tabs-updated', (event, data) => callback(data)),
+  onSelectionAction: (callback) => ipcRenderer.on('selection-action', (event, data) => callback(data)),
 
   removeAllListeners: (channel) => ipcRenderer.removeAllListeners(channel)
 })
