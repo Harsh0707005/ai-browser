@@ -93,20 +93,28 @@ async function handlePlan(message, conversationContext) {
   const prompt = `You are an AI browser automation agent. Break down this user request into step-by-step browser actions.
 ${contextBlock}"${message}"
 
+Each step has a "group" number. Steps within the same group execute in PARALLEL (each in its own browser tab simultaneously). Steps in different groups execute SEQUENTIALLY (lower group finishes before the next group starts).
+
+When to use the same group (parallel): Steps that are completely independent of each other — they don't need results, page state, or context from one another. For instance, gathering information from two separate websites at the same time.
+
+When to use different groups (sequential): A step depends on the outcome, page state, or navigation result of a prior step. For instance, you must first navigate to a site before you can interact with elements on it.
+
+If the entire task is a linear chain of dependent actions, every step should have a unique group number. Only combine steps into the same group when they are truly independent and can run on separate tabs without interfering.
+
 Respond with ONLY this JSON structure:
 {
   "goal": "concise summary of end goal",
   "steps": [
-    {"step": 1, "description": "Navigate to example.com"},
-    {"step": 2, "description": "Type 'query' into the search input"},
-    {"step": 3, "description": "Click the submit button"}
+    {"step": 1, "group": 1, "description": "Navigate to example.com and do X"},
+    {"step": 2, "group": 1, "description": "Navigate to other.com and do Y"},
+    {"step": 3, "group": 2, "description": "Compile results"}
   ]
 }
 
 Rules:
-- Each step = ONE atomic browser action (navigate, click, type)
+- Each step = a self-contained browser task (may involve navigation + interactions on that page)
+- Parallel steps (same group) must each be fully self-contained — include their own navigation since they run in separate tabs
 - Be specific: say exactly what to click, what to type, where to go
-- First step should be navigation if user isn't already on the right page
 - Maximum 10 steps
 - If the user's message is a short follow-up (e.g. "yes", "the first one", "try that"), interpret it in light of the previous conversation context
 - Respond with ONLY valid JSON`
@@ -119,7 +127,7 @@ Rules:
     return { success: true, plan: parsed }
   }
 
-  return { success: true, plan: { goal: message, steps: [{ step: 1, description: message }] } }
+  return { success: true, plan: { goal: message, steps: [{ step: 1, group: 1, description: message }] } }
 }
 
 async function handleStep(data) {

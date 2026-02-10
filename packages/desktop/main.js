@@ -250,7 +250,7 @@ const createWindow = () => {
 ipcMain.on('create-tab', (event, url) => { createTab(url || undefined) })
 ipcMain.on('close-tab', (event, tabId) => { closeTab(tabId) })
 ipcMain.on('switch-tab', (event, tabId) => { switchTab(tabId) })
-ipcMain.handle('create-agent-tab', (event, url) => createTab(url || 'https://www.google.com', { isAgent: true, background: false }))
+ipcMain.handle('create-agent-tab', (event, url, background) => createTab(url || 'https://www.google.com', { isAgent: true, background: !!background }))
 
 ipcMain.on('stop-agent-control', (event, tabId) => {
   const tab = tabs.get(tabId)

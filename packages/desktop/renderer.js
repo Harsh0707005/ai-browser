@@ -330,9 +330,18 @@ function addPlanDisplay(plan) {
   header.textContent = plan.goal
   stepsBody.appendChild(header)
 
+  const groupCounts = {}
+  plan.steps.forEach(step => {
+    const g = step.group || step.step
+    groupCounts[g] = (groupCounts[g] || 0) + 1
+  })
+
   plan.steps.forEach((step, i) => {
+    const g = step.group || step.step
+    const isParallel = groupCounts[g] > 1
+
     const stepDiv = document.createElement('div')
-    stepDiv.className = 'plan-step pending'
+    stepDiv.className = 'plan-step pending' + (isParallel ? ' parallel' : '')
     stepDiv.id = 'plan-' + planId + '-step-' + i
 
     const indicator = document.createElement('div')
@@ -342,6 +351,13 @@ function addPlanDisplay(plan) {
     const label = document.createElement('div')
     label.className = 'step-label'
     label.textContent = step.description
+
+    if (isParallel) {
+      const badge = document.createElement('span')
+      badge.className = 'parallel-badge'
+      badge.textContent = 'parallel'
+      label.appendChild(badge)
+    }
 
     stepDiv.appendChild(indicator)
     stepDiv.appendChild(label)
@@ -427,9 +443,9 @@ function updateSendButtonState() {
 
 function stopAgent() {
   agentAbortRequested = true
-  if (agentTabId && window.electronAPI) {
-    window.electronAPI.closeTab(agentTabId)
-    agentTabId = null
+  if (window.electronAPI) {
+    agentTabIds.forEach(id => window.electronAPI.closeTab(id))
+    agentTabIds.clear()
     updateAgentOverlay()
   }
   setInputEnabled(true)
@@ -448,7 +464,19 @@ function actionLabel(data) {
   return 'Working…'
 }
 
-let agentTabId = null
+const agentTabIds = new Set()
+
+function groupStepsByGroup(steps) {
+  const groupMap = new Map()
+  steps.forEach((step, index) => {
+    const groupId = step.group || (index + 1)
+    if (!groupMap.has(groupId)) groupMap.set(groupId, [])
+    groupMap.get(groupId).push({ ...step, originalIndex: index })
+  })
+  return [...groupMap.entries()]
+    .sort(([a], [b]) => a - b)
+    .map(([, steps]) => steps)
+}
 
 async function sendChatMessage() {
   const message = chatInput.value.trim()
@@ -477,113 +505,135 @@ async function sendChatMessage() {
       return
     }
 
-    agentTabId = await window.electronAPI.createAgentTab()
-
     const planId = addPlanDisplay(planResult.plan)
 
-    await executeAgentPlan(planResult.plan, planId, agentTabId)
+    await executeAgentPlan(planResult.plan, planId)
   } catch (error) {
     removeLastLoading()
     addMessage('Error: ' + error.message, 'error')
   } finally {
     agentAbortRequested = false
-    if (agentTabId && window.electronAPI) {
-      window.electronAPI.stopAgentControl(agentTabId)
+    if (window.electronAPI) {
+      agentTabIds.forEach(id => window.electronAPI.stopAgentControl(id))
     }
-    agentTabId = null
+    agentTabIds.clear()
     updateAgentOverlay()
   }
 
   setInputEnabled(true)
 }
 
-async function executeAgentPlan(plan, planId = activePlanId, tabId = null) {
-  for (let stepIndex = 0; stepIndex < plan.steps.length; stepIndex++) {
+async function executeSingleStep(plan, stepIndex, tabId, planId) {
+  if (agentAbortRequested) return
+  updateStep(stepIndex, 'active', '', planId)
+
+  let stepComplete = false
+  let actionCount = 0
+  const actionsTakenThisStep = []
+
+  while (!stepComplete && actionCount < MAX_ACTIONS_PER_STEP) {
     if (agentAbortRequested) return
-    updateStep(stepIndex, 'active', '', planId)
+    actionCount++
+    await delay(500)
 
-    let stepComplete = false
-    let actionCount = 0
-    const actionsTakenThisStep = []
+    const pageContext = await window.electronAPI.getPageContext(tabId)
+    const currentURL = await window.electronAPI.getPageURL(tabId)
 
-    while (!stepComplete && actionCount < MAX_ACTIONS_PER_STEP) {
-      if (agentAbortRequested) return
-      actionCount++
-      await delay(500)
-
-      const pageContext = await window.electronAPI.getPageContext(tabId)
-      const currentURL = await window.electronAPI.getPageURL(tabId)
-
-      let stepResult
-      try {
-        stepResult = await sendRequest({
-          type: 'step',
-          goal: plan.goal,
-          plan: plan,
-          stepIndex: stepIndex,
-          pageContext: pageContext,
-          currentURL: currentURL,
-          actionsTakenThisStep: actionsTakenThisStep
-        })
-      } catch (error) {
-        updateStep(stepIndex, 'error', error.message)
-        addMessage('Step ' + (stepIndex + 1) + ' failed: ' + error.message, 'error')
-        return
-      }
-
-      if (!stepResult.success && !stepResult.action) {
-        updateStep(stepIndex, 'error', stepResult.error || 'Failed')
-        return
-      }
-
-      if (stepResult.action === 'done') {
-        updateStep(stepIndex, 'completed', stepResult.thought || '', planId)
-        if (stepResult.result && String(stepResult.result).trim()) {
-          activeFindings.push({
-            step: stepIndex + 1,
-            url: currentURL || '',
-            result: String(stepResult.result).trim()
-          })
-        } else if (stepResult.thought && String(stepResult.thought).trim()) {
-          activeFindings.push({
-            step: stepIndex + 1,
-            url: currentURL || '',
-            result: String(stepResult.thought).trim()
-          })
-        }
-        stepComplete = true
-        break
-      }
-
-      updateStep(stepIndex, 'active', actionLabel(stepResult), planId)
-
-      const execResult = await window.electronAPI.executeAction(stepResult, tabId)
-
-      if (!execResult.success) {
-        updateStep(stepIndex, 'error', execResult.error || 'Action failed', planId)
-        addMessage('Action failed: ' + (execResult.error || 'Unknown'), 'error')
-        break
-      }
-
-      actionsTakenThisStep.push({
-        action: stepResult.action,
-        url: stepResult.url,
-        elementId: stepResult.elementId,
-        text: stepResult.text
+    let stepResult
+    try {
+      stepResult = await sendRequest({
+        type: 'step',
+        goal: plan.goal,
+        plan: plan,
+        stepIndex: stepIndex,
+        pageContext: pageContext,
+        currentURL: currentURL,
+        actionsTakenThisStep: actionsTakenThisStep
       })
-
-      await window.electronAPI.waitForLoad(tabId)
+    } catch (error) {
+      updateStep(stepIndex, 'error', error.message)
+      return
     }
 
-    if (!stepComplete && actionCount >= MAX_ACTIONS_PER_STEP) {
-      updateStep(stepIndex, 'completed', 'Max actions reached, moving on', planId)
+    if (!stepResult.success && !stepResult.action) {
+      updateStep(stepIndex, 'error', stepResult.error || 'Failed')
+      return
+    }
+
+    if (stepResult.action === 'done') {
+      updateStep(stepIndex, 'completed', stepResult.thought || '', planId)
+      if (stepResult.result && String(stepResult.result).trim()) {
+        activeFindings.push({
+          step: stepIndex + 1,
+          url: currentURL || '',
+          result: String(stepResult.result).trim()
+        })
+      } else if (stepResult.thought && String(stepResult.thought).trim()) {
+        activeFindings.push({
+          step: stepIndex + 1,
+          url: currentURL || '',
+          result: String(stepResult.thought).trim()
+        })
+      }
+      stepComplete = true
+      break
+    }
+
+    updateStep(stepIndex, 'active', actionLabel(stepResult), planId)
+
+    const execResult = await window.electronAPI.executeAction(stepResult, tabId)
+
+    if (!execResult.success) {
+      updateStep(stepIndex, 'error', execResult.error || 'Action failed', planId)
+      break
+    }
+
+    actionsTakenThisStep.push({
+      action: stepResult.action,
+      url: stepResult.url,
+      elementId: stepResult.elementId,
+      text: stepResult.text
+    })
+
+    await window.electronAPI.waitForLoad(tabId)
+  }
+
+  if (!stepComplete && actionCount >= MAX_ACTIONS_PER_STEP) {
+    updateStep(stepIndex, 'completed', 'Max actions reached, moving on', planId)
+  }
+}
+
+async function executeAgentPlan(plan, planId = activePlanId) {
+  const groups = groupStepsByGroup(plan.steps)
+  let sequentialTabId = null
+
+  for (const group of groups) {
+    if (agentAbortRequested) return
+    const isParallel = group.length > 1
+
+    if (!isParallel) {
+      if (!sequentialTabId) {
+        sequentialTabId = await window.electronAPI.createAgentTab()
+        agentTabIds.add(sequentialTabId)
+      }
+      await executeSingleStep(plan, group[0].originalIndex, sequentialTabId, planId)
+    } else {
+      const tabIds = await Promise.all(
+        group.map((_, i) => window.electronAPI.createAgentTab(null, i > 0))
+      )
+      tabIds.forEach(id => agentTabIds.add(id))
+
+      await Promise.all(
+        group.map((step, i) => executeSingleStep(plan, step.originalIndex, tabIds[i], planId))
+      )
     }
   }
 
   let summary = plan.goal + '. Done.'
   try {
-    const finalUrl = await window.electronAPI.getPageURL(tabId)
-    const finalPageContext = await window.electronAPI.getPageContext(tabId)
+    const anyTabId = [...agentTabIds][0] || null
+    const finalUrl = anyTabId ? await window.electronAPI.getPageURL(anyTabId) : ''
+    const finalPageContext = anyTabId ? await window.electronAPI.getPageContext(anyTabId) : null
     const summaryResult = await sendRequest({
       type: 'summary',
       userQuery: activeUserQuery || plan.goal,
@@ -655,9 +705,9 @@ const agentBorderOverlay = document.getElementById('agentBorderOverlay')
 const agentToast = document.getElementById('agentToast')
 
 function updateAgentOverlay() {
-  const isOnAgentTab = agentTabId && activeTabId === agentTabId
-  agentBorderOverlay.classList.toggle('visible', !!isOnAgentTab)
-  agentToast.classList.toggle('visible', !!isOnAgentTab)
+  const isOnAgentTab = agentTabIds.size > 0 && agentTabIds.has(activeTabId)
+  agentBorderOverlay.classList.toggle('visible', isOnAgentTab)
+  agentToast.classList.toggle('visible', isOnAgentTab)
 }
 
 function renderTabs() {
@@ -666,7 +716,7 @@ function renderTabs() {
     const el = document.createElement('div')
     let cls = 'tab'
     if (tab.id === activeTabId) cls += ' active'
-    if (tab.id === agentTabId) cls += ' agent-tab'
+    if (agentTabIds.has(tab.id)) cls += ' agent-tab'
     el.className = cls
     el.dataset.tabId = tab.id
 

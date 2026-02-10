@@ -15,7 +15,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   closeTab: (tabId) => ipcRenderer.send('close-tab', tabId),
   switchTab: (tabId) => ipcRenderer.send('switch-tab', tabId),
 
-  createAgentTab: (url) => ipcRenderer.invoke('create-agent-tab', url),
+  createAgentTab: (url, background) => ipcRenderer.invoke('create-agent-tab', url, background),
   stopAgentControl: (tabId) => ipcRenderer.send('stop-agent-control', tabId),
 
   getPageContext: (tabId) => ipcRenderer.invoke('get-page-context', tabId),
