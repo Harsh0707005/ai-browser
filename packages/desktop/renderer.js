@@ -214,6 +214,21 @@ function renderMarkdown(md) {
   const codeBlocks = []
   const placeholder = (i) => `@@CODEBLOCK_${i}@@`
   let text = src.replace(/```([a-zA-Z0-9_-]+)?\n([\s\S]*?)```/g, (_, lang, code) => {
+    const langNorm = (lang || '').trim().toLowerCase()
+    if (langNorm === 'table-json' || langNorm === 'json') {
+      try {
+        const data = JSON.parse(code.trim())
+        if (Array.isArray(data.columns) && Array.isArray(data.rows)) {
+          const thCells = data.columns.map(c => '<th>' + escapeHTML(String(c)) + '</th>').join('')
+          const trRows = data.rows.map(row =>
+            '<tr>' + (Array.isArray(row) ? row : []).map(cell => '<td>' + escapeHTML(String(cell)) + '</td>').join('') + '</tr>'
+          ).join('')
+          const tableHtml = '<div class="chat-table-wrap"><table class="chat-table"><thead><tr>' + thCells + '</tr></thead><tbody>' + trRows + '</tbody></table></div>'
+          const idx = codeBlocks.push(tableHtml) - 1
+          return placeholder(idx)
+        }
+      } catch (e) {}
+    }
     const escaped = escapeHTML(code)
     const klass = lang ? ` class="language-${escapeHTML(lang)}"` : ''
     const html = `<pre><code${klass}>${escaped}</code></pre>`

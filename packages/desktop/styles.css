@@ -527,6 +527,35 @@ body {
   text-decoration: underline;
 }
 
+.chat-table-wrap {
+  margin: 10px 0;
+  overflow-x: auto;
+  border-radius: 8px;
+  border: 1px solid rgba(255,255,255,0.1);
+}
+
+.chat-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+}
+
+.chat-table th,
+.chat-table td {
+  padding: 8px 12px;
+  text-align: left;
+  border-bottom: 1px solid rgba(255,255,255,0.08);
+}
+
+.chat-table th {
+  background: rgba(255,255,255,0.06);
+  font-weight: 600;
+}
+
+.chat-table tr:last-child td {
+  border-bottom: none;
+}
+
 .chat-message.user {
   align-self: flex-end;
   background: #2b3a4a;

@@ -128,6 +128,7 @@ USE BROWSING when:
 
 If you can answer directly, respond with:
 {"type": "direct", "response": "your helpful answer here"}
+In the response you may use markdown. For tabular data use a fenced code block with language "table-json" containing a single JSON object with "columns" (array of header strings) and "rows" (array of arrays of cell values).
 
 If browsing is needed, respond with:
 {
@@ -294,8 +295,9 @@ Write the final answer to the user:
 - Focus on the actual result (recommendations, comparison, key facts, next steps they should take)
 - Include relevant sources: cite URLs, links, and references so the user can navigate to them. For research, comparisons, or any factual answer, add clear citations and source links (use markdown links: [description](https://url))
 - List or inline any web URLs that were used so the user can open them (products, articles, docs, etc.)
+- When your answer includes tabular data (comparisons, prices, lists, etc.), format that table as a JSON object with two keys: "columns" (array of column header strings) and "rows" (array of arrays, each inner array is one row of cell values). Put this JSON inside a fenced code block with language "table-json" so it renders as a proper table.
 - If the browsing context doesn't contain enough info to answer fully, say what you found and ask 1 precise follow-up question
-- Plain text with optional markdown links; no JSON`
+- Plain text with optional markdown links; no JSON in the main answer except inside table-json code blocks`
 
   try {
     const text = await callLLM(prompt, model, { json: false })
