@@ -549,7 +549,10 @@ async function sendChatMessage() {
   } finally {
     agentAbortRequested = false
     if (window.electronAPI) {
-      agentTabIds.forEach(id => window.electronAPI.stopAgentControl(id))
+      agentTabIds.forEach(id => {
+        window.electronAPI.stopAgentControl(id)
+        window.electronAPI.closeTab(id)
+      })
     }
     agentTabIds.clear()
     updateAgentOverlay()
