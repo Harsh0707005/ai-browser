@@ -3,6 +3,7 @@ const path = require('path')
 
 let mainWindow
 let sidebarOpen = false
+let sidebarWidth = 0
 
 const tabs = new Map()
 let activeTabId = null
@@ -17,7 +18,7 @@ const updateBrowserViewBounds = () => {
   const view = getActiveView()
   if (!mainWindow || !view) return
   const bounds = mainWindow.getContentBounds()
-  const sidebarWidth = sidebarOpen ? 400 : 0
+  const reserved = sidebarOpen ? sidebarWidth : 0
   
   const activeTab = tabs.get(activeTabId)
   const isAgent = activeTab?.isAgent
@@ -26,7 +27,7 @@ const updateBrowserViewBounds = () => {
   view.setBounds({
     x: borderWidth,
     y: TOOLBAR_HEIGHT + borderWidth,
-    width: bounds.width - sidebarWidth - (borderWidth * 2),
+    width: bounds.width - reserved - (borderWidth * 2),
     height: bounds.height - TOOLBAR_HEIGHT - (borderWidth * 2)
   })
 }
@@ -403,6 +404,11 @@ ipcMain.on('maximize-window', () => {
 
 ipcMain.on('sidebar-toggled', (event, isOpen) => {
   sidebarOpen = isOpen
+  updateBrowserViewBounds()
+})
+
+ipcMain.on('sidebar-width-changed', (event, width) => {
+  sidebarWidth = width
   updateBrowserViewBounds()
 })
 

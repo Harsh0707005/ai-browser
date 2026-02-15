@@ -12,6 +12,11 @@ const chatMessages = document.getElementById('chatMessages')
 const modelSelect = document.getElementById('modelSelect')
 const tabList = document.getElementById('tabList')
 const newTabBtn = document.getElementById('newTabBtn')
+const sidebarResizeHandle = document.getElementById('sidebarResizeHandle')
+
+const SIDEBAR_MIN_WIDTH = 280
+const SIDEBAR_MAX_WIDTH = 700
+const SIDEBAR_DEFAULT_WIDTH = 400
 
 function getSelectedModel() {
   return (modelSelect && modelSelect.value) || 'gemini'
@@ -109,6 +114,48 @@ reloadBtn.addEventListener('click', () => { if (window.electronAPI) window.elect
 sidebarToggle.addEventListener('click', () => { toggleSidebar() })
 sidebarCloseBtn.addEventListener('click', () => { toggleSidebar() })
 
+let sidebarResizing = false
+let sidebarResizeStartX = 0
+let sidebarResizeStartWidth = SIDEBAR_DEFAULT_WIDTH
+
+function getSidebarWidth() {
+  const v = sidebar.style.getPropertyValue('--sidebar-width') || getComputedStyle(sidebar).getPropertyValue('--sidebar-width')
+  const num = parseInt(v, 10)
+  return isNaN(num) ? SIDEBAR_DEFAULT_WIDTH : num
+}
+
+function setSidebarWidth(w) {
+  const clamped = Math.min(SIDEBAR_MAX_WIDTH, Math.max(SIDEBAR_MIN_WIDTH, w))
+  sidebar.style.setProperty('--sidebar-width', clamped + 'px')
+  if (sidebarOpen && window.electronAPI) window.electronAPI.sidebarWidthChanged(clamped)
+}
+
+sidebarResizeHandle.addEventListener('mousedown', (e) => {
+  if (e.button !== 0) return
+  e.preventDefault()
+  sidebarResizing = true
+  sidebarResizeStartX = e.clientX
+  sidebarResizeStartWidth = getSidebarWidth()
+  sidebarResizeHandle.classList.add('resizing')
+  document.body.style.cursor = 'col-resize'
+  document.body.style.userSelect = 'none'
+
+  const onMove = (e) => {
+    const dx = sidebarResizeStartX - e.clientX
+    setSidebarWidth(sidebarResizeStartWidth + dx)
+  }
+  const onUp = () => {
+    sidebarResizing = false
+    sidebarResizeHandle.classList.remove('resizing')
+    document.body.style.cursor = ''
+    document.body.style.userSelect = ''
+    document.removeEventListener('mousemove', onMove)
+    document.removeEventListener('mouseup', onUp)
+  }
+  document.addEventListener('mousemove', onMove)
+  document.addEventListener('mouseup', onUp)
+})
+
 chatInput.addEventListener('keydown', (e) => {
   if (e.key === 'Enter' && !e.shiftKey) {
     e.preventDefault()
@@ -125,14 +172,20 @@ function toggleSidebar() {
   sidebarOpen = !sidebarOpen
   sidebar.classList.toggle('open', sidebarOpen)
   if (sidebarOpen) chatInput.focus()
-  if (window.electronAPI) window.electronAPI.sidebarToggled(sidebarOpen)
+  if (window.electronAPI) {
+    window.electronAPI.sidebarToggled(sidebarOpen)
+    window.electronAPI.sidebarWidthChanged(sidebarOpen ? getSidebarWidth() : 0)
+  }
 }
 
 function openSidebarAndFocus() {
   if (!sidebarOpen) {
     sidebarOpen = true
     sidebar.classList.add('open')
-    if (window.electronAPI) window.electronAPI.sidebarToggled(true)
+    if (window.electronAPI) {
+      window.electronAPI.sidebarToggled(true)
+      window.electronAPI.sidebarWidthChanged(getSidebarWidth())
+    }
   }
   chatInput.focus()
 }

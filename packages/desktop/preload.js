@@ -9,6 +9,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   minimizeWindow: () => ipcRenderer.send('minimize-window'),
   maximizeWindow: () => ipcRenderer.send('maximize-window'),
   sidebarToggled: (isOpen) => ipcRenderer.send('sidebar-toggled', isOpen),
+  sidebarWidthChanged: (width) => ipcRenderer.send('sidebar-width-changed', width),
   getNavigationState: () => ipcRenderer.send('get-navigation-state'),
 
   createTab: (url) => ipcRenderer.send('create-tab', url),
