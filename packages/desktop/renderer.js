@@ -558,8 +558,9 @@ async function sendChatMessage() {
   setInputEnabled(true)
 }
 
-async function executeSingleStep(plan, stepIndex, tabId, planId) {
+async function executeSingleStep(plan, stepIndex, tabId, planId, completedSteps) {
   if (agentAbortRequested) return
+  if (completedSteps && completedSteps.has(stepIndex)) return
   updateStep(stepIndex, 'active', '', planId)
 
   let stepComplete = false
@@ -596,6 +597,7 @@ async function executeSingleStep(plan, stepIndex, tabId, planId) {
     }
 
     if (stepResult.action === 'done') {
+      if (completedSteps) completedSteps.add(stepIndex)
       updateStep(stepIndex, 'completed', stepResult.thought || '', planId)
       if (stepResult.result && String(stepResult.result).trim()) {
         activeFindings.push({
@@ -634,12 +636,14 @@ async function executeSingleStep(plan, stepIndex, tabId, planId) {
   }
 
   if (!stepComplete && actionCount >= MAX_ACTIONS_PER_STEP) {
+    if (completedSteps) completedSteps.add(stepIndex)
     updateStep(stepIndex, 'completed', 'Max actions reached, moving on', planId)
   }
 }
 
 async function executeAgentPlan(plan, planId = activePlanId) {
   const groups = groupStepsByGroup(plan.steps)
+  const completedSteps = new Set()
   let sequentialTabId = null
 
   for (const group of groups) {
@@ -647,11 +651,13 @@ async function executeAgentPlan(plan, planId = activePlanId) {
     const isParallel = group.length > 1
 
     if (!isParallel) {
+      const stepInfo = group[0]
+      if (completedSteps.has(stepInfo.originalIndex)) continue
       if (!sequentialTabId) {
         sequentialTabId = await window.electronAPI.createAgentTab()
         agentTabIds.add(sequentialTabId)
       }
-      await executeSingleStep(plan, group[0].originalIndex, sequentialTabId, planId)
+      await executeSingleStep(plan, stepInfo.originalIndex, sequentialTabId, planId, completedSteps)
     } else {
       const tabIds = await Promise.all(
         group.map((_, i) => window.electronAPI.createAgentTab(null, i > 0))
@@ -659,8 +665,9 @@ async function executeAgentPlan(plan, planId = activePlanId) {
       tabIds.forEach(id => agentTabIds.add(id))
 
       await Promise.all(
-        group.map((step, i) => executeSingleStep(plan, step.originalIndex, tabIds[i], planId))
+        group.map((step, i) => executeSingleStep(plan, step.originalIndex, tabIds[i], planId, completedSteps))
       )
+      if (tabIds.length > 0) sequentialTabId = tabIds[0]
     }
   }
 
