@@ -4,7 +4,7 @@
     "description": "",
     "main": "index.js",
     "scripts": {
-        "dev": "concurrently \"npm run dev -w backend\" \"npm run dev -w electron-app\"",
+        "dev": "concurrently \"npm run dev -w backend\" \"npm run dev -w desktop\"",
         "dev:backend": "npm run dev -w backend",
         "dev:desktop": "npm run dev -w desktop"
     },

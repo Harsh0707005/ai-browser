@@ -9,8 +9,13 @@ const sidebarCloseBtn = document.getElementById('sidebarCloseBtn')
 const chatInput = document.getElementById('chatInput')
 const chatSendBtn = document.getElementById('chatSendBtn')
 const chatMessages = document.getElementById('chatMessages')
+const modelSelect = document.getElementById('modelSelect')
 const tabList = document.getElementById('tabList')
 const newTabBtn = document.getElementById('newTabBtn')
+
+function getSelectedModel() {
+  return (modelSelect && modelSelect.value) || 'gemini'
+}
 
 let currentUrl = 'https://www.google.com'
 let tabsState = []
@@ -68,6 +73,7 @@ function sendRequest(msg) {
     }
     const requestId = ++requestCounter
     msg.requestId = requestId
+    msg.model = getSelectedModel()
     pendingRequests[requestId] = { resolve, reject }
     ws.send(JSON.stringify(msg))
 

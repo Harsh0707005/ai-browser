@@ -3,6 +3,7 @@ import { createServer } from 'http';
 import { WebSocketServer } from 'ws';
 import dotenv from 'dotenv';
 import { GoogleGenAI } from "@google/genai";
+import OpenAI from 'openai';
 
 dotenv.config()
 
@@ -12,17 +13,22 @@ const wss = new WebSocketServer({ server })
 
 const PORT = process.env.PORT ?? 3001
 const GEMINI_API_KEY = process.env.GEMINI_API_KEY
+const OPENAI_API_KEY = process.env.OPENAI_API_KEY
 
 if (!GEMINI_API_KEY) {
   console.error('GEMINI_API_KEY is not set in .env file')
 }
+if (!OPENAI_API_KEY) {
+  console.error('OPENAI_API_KEY is not set in .env file')
+}
 
 const ai = GEMINI_API_KEY ? new GoogleGenAI({ apiKey: GEMINI_API_KEY }) : null
+const openai = OPENAI_API_KEY ? new OpenAI({ apiKey: OPENAI_API_KEY }) : null
 
 app.use(express.json())
 app.get("/health", (req, res) => { return res.send({ message: "healthy" }) })
 
-function parseGeminiJSON(text) {
+function parseJSON(text) {
   if (!text) return null
   try { return JSON.parse(text) } catch (e) {}
   const match = text.match(/\{[\s\S]*\}/)
@@ -30,13 +36,33 @@ function parseGeminiJSON(text) {
   return null
 }
 
-async function callGemini(prompt) {
+async function callGemini(prompt, opts = {}) {
   const response = await ai.models.generateContent({
     model: 'gemini-3-flash-preview',
     contents: prompt,
-    generationConfig: { responseMimeType: 'application/json' }
+    generationConfig: opts.json ? { responseMimeType: 'application/json' } : undefined
   })
   return response.text
+}
+
+async function callOpenAI(prompt, opts = {}) {
+  const response = await openai.chat.completions.create({
+    model: 'gpt-4o',
+    messages: [{ role: 'user', content: prompt }],
+    response_format: opts.json ? { type: 'json_object' } : undefined
+  })
+  const text = response.choices?.[0]?.message?.content
+  return text || ''
+}
+
+async function callLLM(prompt, model, opts = {}) {
+  const useGPT = model === 'gpt'
+  if (useGPT) {
+    if (!openai) return Promise.reject(new Error('OpenAI API not configured (set OPENAI_API_KEY in .env)'))
+    return callOpenAI(prompt, opts)
+  }
+  if (!ai) return Promise.reject(new Error('Gemini API not configured (set GEMINI_API_KEY in .env)'))
+  return callGemini(prompt, opts)
 }
 
 function formatElements(elements) {
@@ -57,8 +83,7 @@ function formatElements(elements) {
   }).join('\n')
 }
 
-async function handleSummarizeConversation(messages) {
-  if (!ai) return { success: false, error: "Gemini API not configured" }
+async function handleSummarizeConversation(messages, model = 'gemini') {
   if (!Array.isArray(messages) || messages.length === 0) return { success: true, summary: '' }
 
   const transcript = messages.map(m => `${m.role === 'user' ? 'User' : 'Assistant'}: ${(m.content || '').trim()}`).join('\n')
@@ -68,11 +93,8 @@ Conversation:
 ${transcript}`
 
   try {
-    const response = await ai.models.generateContent({
-      model: 'gemini-3-flash-preview',
-      contents: prompt
-    })
-    const summary = (response.text || '').trim()
+    const text = await callLLM(prompt, model, { json: false })
+    const summary = (text || '').trim()
     console.log('[SUMMARIZE]', summary ? summary.substring(0, 80) + '...' : '(empty)')
     return { success: true, summary }
   } catch (error) {
@@ -81,10 +103,8 @@ ${transcript}`
   }
 }
 
-async function handlePlan(message, conversationContext) {
-  if (!ai) return { success: false, error: "Gemini API not configured" }
-
-  console.log(`[PLAN] "${message}"` + (conversationContext ? ' (with context)' : ''))
+async function handlePlan(message, conversationContext, model = 'gemini') {
+  console.log(`[PLAN] "${message}" (model: ${model})` + (conversationContext ? ' (with context)' : ''))
 
   const contextBlock = conversationContext && conversationContext.trim()
     ? `PREVIOUS CONVERSATION CONTEXT (user may be answering a follow-up or continuing):\n${conversationContext.trim()}\n\nCURRENT USER MESSAGE: `
@@ -131,8 +151,13 @@ Plan rules (only when type is "plan"):
 - If the user's message is a short follow-up (e.g. "yes", "the first one", "try that"), interpret it in light of the previous conversation context
 - Respond with ONLY valid JSON`
 
-  const text = await callGemini(prompt)
-  const parsed = parseGeminiJSON(text)
+  let text
+  try {
+    text = await callLLM(prompt, model, { json: true })
+  } catch (err) {
+    return { success: false, error: err.message }
+  }
+  const parsed = parseJSON(text)
 
   if (parsed && parsed.type === 'direct' && parsed.response) {
     console.log(`[PLAN] Direct answer: ${parsed.response.substring(0, 80)}...`)
@@ -153,8 +178,7 @@ Plan rules (only when type is "plan"):
 }
 
 async function handleStep(data) {
-  if (!ai) return { success: false, error: "Gemini API not configured" }
-
+  const model = data.model || 'gemini'
   const { goal, plan, stepIndex, pageContext, currentURL, actionsTakenThisStep } = data
   const currentStep = plan.steps[stepIndex]
 
@@ -212,8 +236,13 @@ Rules:
 - If the user's request is informational (recommendations, comparisons, best-of), use "result" on done to capture the useful info you learned from the page
 - Respond with ONLY the JSON object`
 
-  const text = await callGemini(prompt)
-  const parsed = parseGeminiJSON(text)
+  let text
+  try {
+    text = await callLLM(prompt, model, { json: true })
+  } catch (err) {
+    return { success: false, action: 'done', thought: err.message }
+  }
+  const parsed = parseJSON(text)
 
   if (parsed && parsed.action) {
     const part = parsed.action === 'navigate' ? parsed.url : parsed.action === 'type' ? `element ${parsed.elementId}, text` : parsed.elementId != null ? `element ${parsed.elementId}` : ''
@@ -226,8 +255,7 @@ Rules:
 }
 
 async function handleSummary(data) {
-  if (!ai) return { success: false, error: "Gemini API not configured" }
-
+  const model = data.model || 'gemini'
   const { userQuery, goal, finalURL, finalPageContext, findings, plan } = data
   const host = finalURL ? (() => { try { return new URL(finalURL).hostname } catch (e) { return finalURL } })() : ''
 
@@ -267,11 +295,8 @@ Write the final answer to the user:
 - Plain text, no JSON`
 
   try {
-    const response = await ai.models.generateContent({
-      model: 'gemini-3-flash-preview',
-      contents: prompt
-    })
-    let summary = (response.text || '').trim()
+    const text = await callLLM(prompt, model, { json: false })
+    let summary = (text || '').trim()
     if (summary.startsWith('"') && summary.endsWith('"')) summary = summary.slice(1, -1)
     if (!summary) summary = `I couldn't generate a solid answer yet. You're on ${host || 'the page'} now. What should I focus on?`
     console.log('[SUMMARY]', summary)
@@ -293,12 +318,12 @@ wss.on('connection', (ws) => {
 
     try {
       if (msg.type === 'plan') {
-        const result = await handlePlan(msg.message, msg.conversationContext)
+        const result = await handlePlan(msg.message, msg.conversationContext, msg.model || 'gemini')
         ws.send(JSON.stringify({ type: 'plan_result', requestId, ...result }))
       }
 
       if (msg.type === 'summarize_conversation') {
-        const result = await handleSummarizeConversation(msg.messages || [])
+        const result = await handleSummarizeConversation(msg.messages || [], msg.model || 'gemini')
         ws.send(JSON.stringify({ type: 'summarize_conversation_result', requestId, ...result }))
       }
 

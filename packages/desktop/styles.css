@@ -383,6 +383,40 @@ body {
   letter-spacing: 0.3px;
 }
 
+.sidebar-header-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.model-select {
+  height: 28px;
+  padding: 0 24px 0 8px;
+  font-size: 12px;
+  font-weight: 500;
+  color: #e0e0e0;
+  background: #333;
+  border: 1px solid #454545;
+  border-radius: 6px;
+  cursor: pointer;
+  appearance: none;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12'%3E%3Cpath fill='%23888' d='M2.5 4.5L6 8l3.5-3.5'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 6px center;
+  transition: border-color 0.2s, background-color 0.2s;
+}
+
+.model-select:hover {
+  background-color: #3c3c3c;
+  border-color: #555;
+}
+
+.model-select:focus {
+  outline: none;
+  border-color: #4a90e2;
+  box-shadow: 0 0 0 1px #4a90e2;
+}
+
 .sidebar-close {
   width: 30px;
   height: 30px;
