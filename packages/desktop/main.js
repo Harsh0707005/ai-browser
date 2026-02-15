@@ -70,11 +70,14 @@ function wireViewEvents(tabId, view) {
         z-index: 2147483646;
         background: #1a1a1a;
         border: 1px solid #444;
-        border-radius: 10px;
-        padding: 4px;
+        border-radius: 12px;
+        padding: 14px 18px;
         display: flex;
-        gap: 2px;
-        box-shadow: 0 4px 20px rgba(0,0,0,0.5);
+        flex-direction: column;
+        align-items: center;
+        gap: 10px;
+        min-width: 240px;
+        box-shadow: 0 4px 24px rgba(0,0,0,0.5);
         font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
         opacity: 0;
         pointer-events: none;
@@ -84,19 +87,74 @@ function wireViewEvents(tabId, view) {
         opacity: 1;
         pointer-events: auto;
       }
-      #ai-sel-popup button {
-        background: transparent;
+      #ai-sel-popup .ai-sel-summarize {
+        padding: 8px 20px;
+        border-radius: 8px;
         border: none;
-        color: #e0e0e0;
-        padding: 6px 14px;
-        border-radius: 7px;
-        font-size: 12px;
-        font-weight: 500;
+        background: linear-gradient(135deg, #3a3a4a 0%, #2d2d3a 100%);
+        color: #e8e8e8;
+        font-size: 13px;
+        font-weight: 600;
         cursor: pointer;
-        white-space: nowrap;
-        transition: background 0.15s;
+        letter-spacing: 0.3px;
+        transition: background 0.2s, transform 0.1s;
+        box-shadow: 0 1px 3px rgba(0,0,0,0.3);
       }
-      #ai-sel-popup button:hover {
+      #ai-sel-popup .ai-sel-summarize:hover {
+        background: linear-gradient(135deg, #4a4a5a 0%, #3d3d4a 100%);
+        transform: translateY(-1px);
+      }
+      #ai-sel-popup .ai-sel-summarize:active {
+        transform: translateY(0);
+      }
+      #ai-sel-popup .ai-sel-or {
+        font-size: 11px;
+        color: #888;
+        letter-spacing: 0.5px;
+        text-transform: uppercase;
+      }
+      #ai-sel-popup .ai-sel-input-wrap {
+        width: 100%;
+        display: flex;
+        align-items: center;
+        border: 1px solid #444;
+        border-radius: 8px;
+        background: #252526;
+        overflow: hidden;
+      }
+      #ai-sel-popup .ai-sel-input-wrap:focus-within {
+        border-color: #555;
+      }
+      #ai-sel-popup .ai-sel-input-wrap input {
+        flex: 1;
+        min-width: 0;
+        padding: 8px 12px;
+        border: none;
+        background: transparent;
+        color: #e0e0e0;
+        font-size: 12px;
+        font-family: inherit;
+        outline: none;
+      }
+      #ai-sel-popup .ai-sel-input-wrap input::placeholder {
+        color: #666;
+      }
+      #ai-sel-popup .ai-sel-send {
+        flex-shrink: 0;
+        width: 36px;
+        height: 36px;
+        border: none;
+        background: transparent;
+        color: #888;
+        cursor: pointer;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        padding: 0;
+        transition: color 0.15s, background 0.15s;
+      }
+      #ai-sel-popup .ai-sel-send:hover {
+        color: #e0e0e0;
         background: #333;
       }
     `)
@@ -106,18 +164,44 @@ function wireViewEvents(tabId, view) {
         var popup = document.createElement('div');
         popup.id = 'ai-sel-popup';
         var btnS = document.createElement('button');
+        btnS.className = 'ai-sel-summarize';
         btnS.textContent = 'Summarize';
-        var btnA = document.createElement('button');
-        btnA.textContent = 'Ask';
+        var orLabel = document.createElement('div');
+        orLabel.className = 'ai-sel-or';
+        orLabel.textContent = 'or';
+        var wrap = document.createElement('div');
+        wrap.className = 'ai-sel-input-wrap';
+        var inp = document.createElement('input');
+        inp.type = 'text';
+        inp.placeholder = 'Ask about this...';
+        var sendBtn = document.createElement('button');
+        sendBtn.className = 'ai-sel-send';
+        sendBtn.type = 'button';
+        sendBtn.innerHTML = '<svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M2 8h12M9 4l4 4-4 4"/></svg>';
+        wrap.appendChild(inp);
+        wrap.appendChild(sendBtn);
         popup.appendChild(btnS);
-        popup.appendChild(btnA);
+        popup.appendChild(orLabel);
+        popup.appendChild(wrap);
         document.body.appendChild(popup);
         var selText = '';
-        function hide() { popup.classList.remove('visible'); }
-        function show(x, y) {
-          popup.style.left = x + 'px';
+        function hide() {
+          popup.classList.remove('visible');
+          inp.value = '';
+        }
+        function show(centerX, y) {
+          popup.style.left = centerX + 'px';
           popup.style.top = y + 'px';
+          popup.style.transform = 'translateX(-50%)';
           popup.classList.add('visible');
+          inp.value = '';
+          setTimeout(function() { inp.focus(); }, 50);
+        }
+        function sendAsk() {
+          var q = inp.value.trim();
+          console.log('__AI_ACTION__:' + JSON.stringify({ type: 'ask', text: selText, query: q }));
+          hide();
+          window.getSelection().removeAllRanges();
         }
         document.addEventListener('mouseup', function(e) {
           if (popup.contains(e.target)) return;
@@ -128,10 +212,10 @@ function wireViewEvents(tabId, view) {
               selText = t;
               var range = sel.getRangeAt(0);
               var rect = range.getBoundingClientRect();
-              var px = Math.min(rect.left + rect.width / 2 - 70, window.innerWidth - 180);
-              var py = rect.top - 44;
+              var centerX = rect.left + rect.width / 2;
+              var py = rect.top - 120;
               if (py < 8) py = rect.bottom + 8;
-              show(Math.max(8, px), py);
+              show(Math.max(120, Math.min(window.innerWidth - 120, centerX)), py);
             } else { hide(); }
           }, 10);
         });
@@ -141,12 +225,16 @@ function wireViewEvents(tabId, view) {
         document.addEventListener('scroll', hide, true);
         btnS.addEventListener('click', function() {
           console.log('__AI_ACTION__:' + JSON.stringify({ type: 'summarize', text: selText }));
-          hide(); window.getSelection().removeAllRanges();
+          hide();
+          window.getSelection().removeAllRanges();
         });
-        btnA.addEventListener('click', function() {
-          console.log('__AI_ACTION__:' + JSON.stringify({ type: 'ask', text: selText }));
-          hide(); window.getSelection().removeAllRanges();
+        inp.addEventListener('keydown', function(e) {
+          if (e.key === 'Enter') {
+            e.preventDefault();
+            sendAsk();
+          }
         });
+        sendBtn.addEventListener('click', sendAsk);
       })()
     `)
 

@@ -867,6 +867,10 @@ if (window.electronAPI) {
     } else if (data.type === 'ask') {
       setReference(data.text)
       openSidebarAndFocus()
+      if (data.query) {
+        chatInput.value = data.query
+        sendChatMessage()
+      }
     }
   })
 }
