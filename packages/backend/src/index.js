@@ -233,7 +233,8 @@ Rules:
 - If the step is already fulfilled by the current page state, return done
 - Do NOT suggest an action already listed in ACTIONS ALREADY DONE FOR THIS STEP
 - One action per response then we will ask again; return done when this step is achieved
-- If the user's request is informational (recommendations, comparisons, best-of), use "result" on done to capture the useful info you learned from the page
+- If the user's request is informational (recommendations, comparisons, best-of, research), use "result" on done to capture the useful info you learned from the page
+- When returning done for research or informational steps, include the current page URL in result so it can be cited (e.g. "Source: <current page URL>" or inline the URL where relevant). Include any other relevant URLs from the page (articles, studies, products) when they support the answer
 - Respond with ONLY the JSON object`
 
   let text
@@ -291,8 +292,10 @@ ${pageText}
 
 Write the final answer to the user:
 - Focus on the actual result (recommendations, comparison, key facts, next steps they should take)
+- Include relevant sources: cite URLs, links, and references so the user can navigate to them. For research, comparisons, or any factual answer, add clear citations and source links (use markdown links: [description](https://url))
+- List or inline any web URLs that were used so the user can open them (products, articles, docs, etc.)
 - If the browsing context doesn't contain enough info to answer fully, say what you found and ask 1 precise follow-up question
-- Plain text, no JSON`
+- Plain text with optional markdown links; no JSON`
 
   try {
     const text = await callLLM(prompt, model, { json: false })
