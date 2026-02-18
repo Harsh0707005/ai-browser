@@ -14,12 +14,17 @@ const wss = new WebSocketServer({ server })
 const PORT = process.env.PORT ?? 3001
 const GEMINI_API_KEY = process.env.GEMINI_API_KEY
 const OPENAI_API_KEY = process.env.OPENAI_API_KEY
+const CLAUDE_API_KEY = process.env.CLAUDE_API_KEY
+const CLAUDE_MODEL = process.env.CLAUDE_MODEL || 'claude-3-5-sonnet-latest'
 
 if (!GEMINI_API_KEY) {
   console.error('GEMINI_API_KEY is not set in .env file')
 }
 if (!OPENAI_API_KEY) {
   console.error('OPENAI_API_KEY is not set in .env file')
+}
+if (!CLAUDE_API_KEY) {
+  console.error('CLAUDE_API_KEY is not set in .env file')
 }
 
 const ai = GEMINI_API_KEY ? new GoogleGenAI({ apiKey: GEMINI_API_KEY }) : null
@@ -55,7 +60,43 @@ async function callOpenAI(prompt, opts = {}) {
   return text || ''
 }
 
+async function callClaude(prompt, opts = {}) {
+  const response = await fetch('https://api.anthropic.com/v1/messages', {
+    method: 'POST',
+    headers: {
+      'content-type': 'application/json',
+      'x-api-key': CLAUDE_API_KEY,
+      'anthropic-version': '2023-06-01'
+    },
+    body: JSON.stringify({
+      model: CLAUDE_MODEL,
+      max_tokens: opts.json ? 2048 : 3072,
+      messages: [{ role: 'user', content: prompt }],
+      ...(opts.json ? { system: 'Respond with valid JSON only.' } : {})
+    })
+  })
+
+  const data = await response.json().catch(() => null)
+  if (!response.ok) {
+    const msg = data && data.error && data.error.message ? data.error.message : `Claude API error (${response.status})`
+    throw new Error(msg)
+  }
+
+  const blocks = data && Array.isArray(data.content) ? data.content : []
+  const text = blocks
+    .filter(b => b && b.type === 'text' && typeof b.text === 'string')
+    .map(b => b.text)
+    .join('\n')
+    .trim()
+  return text
+}
+
 async function callLLM(prompt, model, opts = {}) {
+  if (model === 'claude') {
+    if (!CLAUDE_API_KEY) return Promise.reject(new Error('Claude API not configured (set CLAUDE_API_KEY in .env)'))
+    return callClaude(prompt, opts)
+  }
+
   const useGPT = model === 'gpt'
   if (useGPT) {
     if (!openai) return Promise.reject(new Error('OpenAI API not configured (set OPENAI_API_KEY in .env)'))
