@@ -129,6 +129,7 @@ async function handleSummarizeConversation(messages, model = 'gemini') {
 
   const transcript = messages.map(m => `${m.role === 'user' ? 'User' : 'Assistant'}: ${(m.content || '').trim()}`).join('\n')
   const prompt = `Summarize this browser-assistant conversation in 2-4 short sentences. Keep: what the user wanted to do, what was done, any follow-up question the assistant asked, and where things were left off. Plain text only, no bullets.
+Critical accuracy rule: do NOT fabricate any number, metric, detail, quote, or fact. If something is missing or uncertain in the conversation, omit it instead of guessing.
 
 Conversation:
 ${transcript}`
@@ -170,6 +171,7 @@ USE BROWSING when:
 If you can answer directly, respond with:
 {"type": "direct", "response": "your helpful answer here"}
 In the response you may use markdown. For tabular data use a fenced code block with language "table-json" containing a single JSON object with "columns" (array of header strings) and "rows" (array of arrays of cell values).
+Accuracy rule for direct answers: never fabricate any number, metric, price, date, name, quote, source, or detail. If you are not sure or do not have a value, clearly say it is unavailable/unknown or omit it.
 
 If browsing is needed, respond with:
 {
@@ -191,6 +193,7 @@ Plan rules (only when type is "plan"):
 - Be specific: say exactly what to click, what to type, where to go
 - Maximum 10 steps
 - If the user's message is a short follow-up (e.g. "yes", "the first one", "try that"), interpret it in light of the previous conversation context
+- Do not invent facts in step descriptions. If a specific detail is unknown, keep the step generic and evidence-seeking rather than asserting made-up values
 - Respond with ONLY valid JSON`
 
   let text
@@ -277,6 +280,7 @@ Rules:
 - One action per response then we will ask again; return done when this step is achieved
 - If the user's request is informational (recommendations, comparisons, best-of, research), use "result" on done to capture the useful info you learned from the page
 - When returning done for research or informational steps, include the current page URL in result so it can be cited (e.g. "Source: <current page URL>" or inline the URL where relevant). Include any other relevant URLs from the page (articles, studies, products) when they support the answer
+- Never fabricate numbers, metrics, claims, names, prices, or any factual detail in "thought" or "result". Only include details visible on the current page or already provided in plan/context. If a value is not available, omit it or mark it unknown
 - Respond with ONLY the JSON object`
 
   let text
@@ -338,6 +342,7 @@ Write the final answer to the user:
 - List or inline any web URLs that were used so the user can open them (products, articles, docs, etc.)
 - When your answer includes tabular data (comparisons, prices, lists, etc.), format that table as a JSON object with two keys: "columns" (array of column header strings) and "rows" (array of arrays, each inner array is one row of cell values). Put this JSON inside a fenced code block with language "table-json" so it renders as a proper table.
 - If the browsing context doesn't contain enough info to answer fully, say what you found and ask 1 precise follow-up question
+- Critical accuracy rule: do NOT fabricate any number, metric, detail, quote, source, or fact. If a detail cannot be verified from findings/page context, do not include it. Be blunt about missing information
 - Plain text with optional markdown links; no JSON in the main answer except inside table-json code blocks`
 
   try {
