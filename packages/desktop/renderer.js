@@ -525,8 +525,12 @@ function updateSendButtonState() {
 function stopAgent() {
   agentAbortRequested = true
   if (window.electronAPI) {
-    agentTabIds.forEach(id => window.electronAPI.closeTab(id))
+    agentTabIds.forEach(id => {
+      window.electronAPI.stopAgentControl(id)
+      if (ownedAgentTabIds.has(id)) window.electronAPI.closeTab(id)
+    })
     agentTabIds.clear()
+    ownedAgentTabIds.clear()
     updateAgentOverlay()
   }
   setInputEnabled(true)
@@ -546,6 +550,7 @@ function actionLabel(data) {
 }
 
 const agentTabIds = new Set()
+const ownedAgentTabIds = new Set()
 
 function groupStepsByGroup(steps) {
   const groupMap = new Map()
@@ -623,10 +628,11 @@ async function sendChatMessage() {
     if (window.electronAPI) {
       agentTabIds.forEach(id => {
         window.electronAPI.stopAgentControl(id)
-        if (closeTabsOnFinish) window.electronAPI.closeTab(id)
+        if (closeTabsOnFinish && ownedAgentTabIds.has(id)) window.electronAPI.closeTab(id)
       })
     }
     agentTabIds.clear()
+    ownedAgentTabIds.clear()
     updateAgentOverlay()
   }
 
@@ -719,7 +725,15 @@ async function executeSingleStep(plan, stepIndex, tabId, planId, completedSteps)
 async function executeAgentPlan(plan, planId = activePlanId) {
   const groups = groupStepsByGroup(plan.steps)
   const completedSteps = new Set()
+  const startFromCurrentTab = !!(plan && plan.execution && plan.execution.startFromCurrentTab)
   let sequentialTabId = null
+
+  if (startFromCurrentTab && activeTabId && window.electronAPI) {
+    sequentialTabId = activeTabId
+    window.electronAPI.startAgentControl(sequentialTabId)
+    agentTabIds.add(sequentialTabId)
+    updateAgentOverlay()
+  }
 
   for (const group of groups) {
     if (agentAbortRequested) return
@@ -731,6 +745,7 @@ async function executeAgentPlan(plan, planId = activePlanId) {
       if (!sequentialTabId) {
         sequentialTabId = await window.electronAPI.createAgentTab()
         agentTabIds.add(sequentialTabId)
+        ownedAgentTabIds.add(sequentialTabId)
       }
       await executeSingleStep(plan, stepInfo.originalIndex, sequentialTabId, planId, completedSteps)
     } else {
@@ -741,12 +756,18 @@ async function executeAgentPlan(plan, planId = activePlanId) {
           Array.from({ length: n - 1 }, (_, i) => window.electronAPI.createAgentTab(null, i > 0))
         )
         tabIds = [sequentialTabId, ...extra]
-        extra.forEach(id => agentTabIds.add(id))
+        extra.forEach(id => {
+          agentTabIds.add(id)
+          ownedAgentTabIds.add(id)
+        })
       } else {
         tabIds = await Promise.all(
           group.map((_, i) => window.electronAPI.createAgentTab(null, i > 0))
         )
-        tabIds.forEach(id => agentTabIds.add(id))
+        tabIds.forEach(id => {
+          agentTabIds.add(id)
+          ownedAgentTabIds.add(id)
+        })
       }
 
       await Promise.all(
@@ -758,6 +779,7 @@ async function executeAgentPlan(plan, planId = activePlanId) {
         const id = tabIds[i]
         if (window.electronAPI) window.electronAPI.closeTab(id)
         agentTabIds.delete(id)
+        ownedAgentTabIds.delete(id)
       }
       updateAgentOverlay()
     }

@@ -177,6 +177,9 @@ If browsing is needed, respond with:
 {
   "type": "plan",
   "goal": "concise summary of end goal",
+  "execution": {
+    "startFromCurrentTab": true
+  },
   "steps": [
     {"step": 1, "group": 1, "description": "Navigate to example.com and do X"},
     {"step": 2, "group": 1, "description": "Navigate to other.com and do Y"},
@@ -195,6 +198,7 @@ Plan rules (only when type is "plan"):
 - Be specific: say exactly what to click, what to type, where to go
 - Maximum 10 steps
 - If the user's message is a short follow-up (e.g. "yes", "the first one", "try that"), interpret it in light of the previous conversation context
+- Set execution.startFromCurrentTab=true when the request is clearly continuing from current page state, prior on-page operations, or recent assistant-led workflow context; otherwise set it to false
 - Do not invent facts in step descriptions. If a specific detail is unknown, keep the step generic and evidence-seeking rather than asserting made-up values
 - Do not assume site structure in advance (forms, submit flows, selectors, menus, layout). Different sites can be structured or unstructured
 - For interactions, plan to first inspect the visible page elements/context, then decide the exact interaction pattern based on what is actually present

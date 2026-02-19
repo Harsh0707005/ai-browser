@@ -439,6 +439,14 @@ ipcMain.on('close-tab', (event, tabId) => { closeTab(tabId) })
 ipcMain.on('switch-tab', (event, tabId) => { switchTab(tabId) })
 ipcMain.handle('create-agent-tab', (event, url, background) => createTab(url || 'https://www.google.com', { isAgent: true, background: !!background }))
 
+ipcMain.on('start-agent-control', (event, tabId) => {
+  const tab = tabs.get(tabId)
+  if (tab && !tab.isAgent) {
+    tab.isAgent = true
+    updateBrowserViewBounds()
+  }
+})
+
 ipcMain.on('stop-agent-control', (event, tabId) => {
   const tab = tabs.get(tabId)
   if (tab && tab.isAgent) {
@@ -604,21 +612,44 @@ ipcMain.handle('execute-action', async (event, action, tabId) => {
 
     if (action.action === 'type') {
       const eid = Number(action.elementId)
-      const text = JSON.stringify(action.text)
-      const result = await view.webContents.executeJavaScript(`
+      const text = String(action.text ?? '')
+      const focusResult = await view.webContents.executeJavaScript(`
         (function() {
           var el = document.querySelector('[data-ai-id="${eid}"]');
-          if (el) {
-            el.focus();
-            el.value = ${text};
-            el.dispatchEvent(new Event('input', { bubbles: true }));
-            el.dispatchEvent(new Event('change', { bubbles: true }));
+          if (!el) return false;
+
+          el.focus();
+
+          if (typeof el.select === 'function') {
+            el.select();
             return true;
           }
-          return false;
+
+          if (el.isContentEditable) {
+            var sel = window.getSelection();
+            var range = document.createRange();
+            range.selectNodeContents(el);
+            sel.removeAllRanges();
+            sel.addRange(range);
+            return true;
+          }
+
+          return true;
         })()
       `)
-      return { success: result, error: result ? null : 'Element [' + eid + '] not found' }
+      if (!focusResult) return { success: false, error: 'Element [' + eid + '] not found' }
+
+      await view.webContents.insertText(text)
+
+      await view.webContents.executeJavaScript(`
+        (function() {
+          var active = document.activeElement;
+          if (!active) return;
+          active.dispatchEvent(new Event('change', { bubbles: true }));
+        })()
+      `)
+
+      return { success: true }
     }
 
     return { success: true }
