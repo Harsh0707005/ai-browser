@@ -190,10 +190,14 @@ Plan rules (only when type is "plan"):
 - If the entire task is a linear chain of dependent actions, every step should have a unique group number.
 - Each step = a self-contained browser task (may involve navigation + interactions on that page)
 - Parallel steps (same group) must each be fully self-contained — include their own navigation since they run in separate tabs
+- Break the goal into small, concrete subactions. Avoid large vague steps; prefer short step descriptions that each accomplish one clear objective
+- Ensure steps are not repetitive clones: each step should represent a distinct action/progression toward the goal
 - Be specific: say exactly what to click, what to type, where to go
 - Maximum 10 steps
 - If the user's message is a short follow-up (e.g. "yes", "the first one", "try that"), interpret it in light of the previous conversation context
 - Do not invent facts in step descriptions. If a specific detail is unknown, keep the step generic and evidence-seeking rather than asserting made-up values
+- Do not assume site structure in advance (forms, submit flows, selectors, menus, layout). Different sites can be structured or unstructured
+- For interactions, plan to first inspect the visible page elements/context, then decide the exact interaction pattern based on what is actually present
 - Respond with ONLY valid JSON`
 
   let text
@@ -275,6 +279,8 @@ Rules:
 - elementId MUST be a number from the [id] column above
 - For type: pick the correct input element, provide exact text
 - For click: pick the exact button/link element
+- Do not assume conventional HTML structure. A flow may use forms, or plain div/button driven UI, or custom widgets. Base actions only on elements actually present in CURRENT PAGE / INTERACTIVE ELEMENTS
+- Decide interaction strategy only after inspecting current page context; if unsure, use the safest next exploratory action grounded in visible elements
 - If the step is already fulfilled by the current page state, return done
 - Do NOT suggest an action already listed in ACTIONS ALREADY DONE FOR THIS STEP
 - One action per response then we will ask again; return done when this step is achieved
