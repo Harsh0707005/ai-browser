@@ -1,0 +1,19 @@
+module.exports = [
+  'a[href]',
+  'button',
+  'input:not([type="hidden"])',
+  'select',
+  'textarea',
+  '[role="button"]',
+  '[role="link"]',
+  '[role="tab"]',
+  '[role="menuitem"]',
+  '[role="option"]',
+  '[role="checkbox"]',
+  '[role="radio"]',
+  '[role="switch"]',
+  '[onclick]',
+  '[onmousedown]',
+  '[ondblclick]',
+  'label[for]'
+]

@@ -1,5 +1,6 @@
 const { app, BrowserWindow, BrowserView, ipcMain, globalShortcut } = require('electron/main')
 const path = require('path')
+const { injectClickableOverlays } = require('./image-based')
 
 let mainWindow
 let sidebarOpen = false
@@ -238,6 +239,8 @@ function wireViewEvents(tabId, view) {
       })()
     `)
 
+    injectClickableOverlays(view.webContents)
+
     if (tab && tab.isAgent) {
       view.webContents.insertCSS(`
         #agent-toast-pill {
@@ -319,6 +322,7 @@ function wireViewEvents(tabId, view) {
         canGoForward: view.webContents.canGoForward()
       })
     }
+    injectClickableOverlays(view.webContents)
   })
 
   view.webContents.on('console-message', (event, level, message) => {
@@ -506,21 +510,7 @@ ipcMain.handle('get-page-context', async (event, tabId) => {
   try {
     const context = await view.webContents.executeJavaScript(`
       (function() {
-        var elements = [];
-        var id = 0;
-        var MAX = 200;
-        var selectors = 'a[href], button, input, textarea, select, [role="button"], [role="link"], [role="tab"], [type="submit"], [onclick]';
-        var els = document.querySelectorAll(selectors);
-
-        for (var i = 0; i < els.length && id < MAX; i++) {
-          var el = els[i];
-          var rect = el.getBoundingClientRect();
-          if (rect.width === 0 && rect.height === 0) continue;
-          if (el.disabled) continue;
-          if (el.type === 'hidden') continue;
-
-          el.setAttribute('data-ai-id', id);
-
+        function buildInfo(el, id) {
           var info = { id: id, tag: el.tagName.toLowerCase() };
           if (el.type) info.type = el.type;
           if (el.name) info.name = el.name;
@@ -531,12 +521,36 @@ ipcMain.handle('get-page-context', async (event, tabId) => {
           if (el.title) info.title = el.title;
           if (el.getAttribute('role')) info.role = el.getAttribute('role');
           if (el.value && (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA')) info.value = el.value;
-
           var text = (el.innerText || el.textContent || '').trim();
           if (text && text.length > 0) info.text = text.substring(0, 80);
-
-          elements.push(info);
-          id++;
+          return info;
+        }
+        var elements = [];
+        var MAX = 200;
+        var withIds = document.querySelectorAll('[data-ai-id]');
+        var seen = new Set();
+        for (var i = 0; i < withIds.length && elements.length < MAX; i++) {
+          var el = withIds[i];
+          if (el.id === 'ai-clickable-overlays' || el.classList.contains('ai-clickable-badge')) continue;
+          var rid = el.getAttribute('data-ai-id');
+          if (seen.has(rid)) continue;
+          seen.add(rid);
+          var rect = el.getBoundingClientRect();
+          if (rect.width < 2 || rect.height < 2) continue;
+          elements.push(buildInfo(el, parseInt(rid, 10)));
+        }
+        if (elements.length === 0) {
+          var selectors = 'a[href], button, input, textarea, select, [role="button"], [role="link"], [role="tab"], [type="submit"], [onclick]';
+          var els = document.querySelectorAll(selectors);
+          for (var j = 0; j < els.length && elements.length < MAX; j++) {
+            var e = els[j];
+            var r = e.getBoundingClientRect();
+            if (r.width === 0 && r.height === 0) continue;
+            if (e.disabled) continue;
+            if (e.type === 'hidden') continue;
+            e.setAttribute('data-ai-id', elements.length);
+            elements.push(buildInfo(e, elements.length));
+          }
         }
 
         var headings = [];
