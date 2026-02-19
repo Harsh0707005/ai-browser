@@ -580,6 +580,7 @@ async function sendChatMessage() {
   conversationHistory.push({ role: 'user', content: message })
   addMessage(rawMessage, 'user', currentReference)
   addMessage('Planning...', 'loading')
+  let closeTabsOnFinish = false
 
   try {
     const conversationContext = await getContextForPlan()
@@ -610,7 +611,10 @@ async function sendChatMessage() {
 
     const planId = addPlanDisplay(planResult.plan)
 
-    await executeAgentPlan(planResult.plan, planId)
+    const executionResult = await executeAgentPlan(planResult.plan, planId)
+    if (executionResult && typeof executionResult.closeTabs === 'boolean') {
+      closeTabsOnFinish = executionResult.closeTabs
+    }
   } catch (error) {
     removeLastLoading()
     addMessage('Error: ' + error.message, 'error')
@@ -619,7 +623,7 @@ async function sendChatMessage() {
     if (window.electronAPI) {
       agentTabIds.forEach(id => {
         window.electronAPI.stopAgentControl(id)
-        window.electronAPI.closeTab(id)
+        if (closeTabsOnFinish) window.electronAPI.closeTab(id)
       })
     }
     agentTabIds.clear()
@@ -760,6 +764,7 @@ async function executeAgentPlan(plan, planId = activePlanId) {
   }
 
   let summary = plan.goal + '. Done.'
+  let closeTabs = false
   try {
     const anyTabId = [...agentTabIds][0] || null
     const finalUrl = anyTabId ? await window.electronAPI.getPageURL(anyTabId) : ''
@@ -775,6 +780,7 @@ async function executeAgentPlan(plan, planId = activePlanId) {
     })
     if (summaryResult.success && summaryResult.summary) {
       summary = summaryResult.summary
+      if (typeof summaryResult.closeTabs === 'boolean') closeTabs = summaryResult.closeTabs
     } else if (finalUrl) {
       try {
         summary = `You're on ${new URL(finalUrl).hostname} now. What would you like to do?`
@@ -784,6 +790,7 @@ async function executeAgentPlan(plan, planId = activePlanId) {
   conversationHistory.push({ role: 'assistant', content: summary })
   collapsePlanWithSummary(summary, planId)
   addMessage(summary, 'assistant')
+  return { closeTabs }
 }
 
 function navigate(url) {

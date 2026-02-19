@@ -356,8 +356,51 @@ Write the final answer to the user:
     let summary = (text || '').trim()
     if (summary.startsWith('"') && summary.endsWith('"')) summary = summary.slice(1, -1)
     if (!summary) summary = `I couldn't generate a solid answer yet. You're on ${host || 'the page'} now. What should I focus on?`
+    const closurePrompt = `Decide whether agent-controlled browser tabs should be closed after this run.
+
+Return ONLY valid JSON:
+{"closeTabs":true|false,"reason":"short reason"}
+
+Context:
+USER REQUEST:
+"${userQuery || goal}"
+
+PLAN:
+${planText}
+
+FINDINGS:
+${findingsText}
+
+CURRENT PAGE:
+Host: ${host || 'unknown'}
+${pageText}
+
+FINAL ANSWER DRAFT:
+${summary}
+
+Decision policy:
+- closeTabs=true only when the task is closed-loop and the user likely does not need to continue interacting on the current page
+- closeTabs=false when the task appears open-loop and likely needs user continuation on-page (review/edit/confirm/submit/sign-in/payment/captcha/follow-up interaction)
+- Do not rely on assumptions about site structure; decide only from the provided context
+- If uncertain, choose closeTabs=false
+- Never fabricate details or metrics`
+
+    let closeTabs = false
+    let closeTabsReason = 'Kept open by default for potential user continuation'
+    try {
+      const closureText = await callLLM(closurePrompt, model, { json: true })
+      const closureParsed = parseJSON(closureText)
+      if (closureParsed && typeof closureParsed.closeTabs === 'boolean') {
+        closeTabs = closureParsed.closeTabs
+        if (closureParsed.reason && String(closureParsed.reason).trim()) {
+          closeTabsReason = String(closureParsed.reason).trim()
+        }
+      }
+    } catch (_) {}
+
     console.log('[SUMMARY]', summary)
-    return { success: true, summary }
+    console.log('[CLOSURE]', closeTabs ? 'close' : 'keep', '|', closeTabsReason)
+    return { success: true, summary, closeTabs, closeTabsReason }
   } catch (error) {
     console.error('[SUMMARY] Error:', error.message)
     return { success: false, error: error.message }
