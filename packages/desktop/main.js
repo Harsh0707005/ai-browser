@@ -395,6 +395,15 @@ function sendTabsUpdate() {
 }
 
 function wireViewEvents(tabId, view) {
+  // Open target="_blank" / window.open from web pages in a new tab instead of popup
+  view.webContents.setWindowOpenHandler(({ url }) => {
+    const u = (url || '').trim()
+    if (u && (u.startsWith('http://') || u.startsWith('https://'))) {
+      createTab(u)
+    }
+    return { action: 'deny' }
+  })
+
   view.webContents.on('did-start-loading', () => {
     if (tabId === activeTabId && mainWindow) {
       mainWindow.webContents.send('navigation-start')
@@ -832,6 +841,14 @@ const createWindow = () => {
   mainWindow.loadFile('index.html').then(() => {
     mainWindow.maximize()
     createTab()
+    // Open links with target="_blank" / Ctrl+Click (sidebar, etc.) in a new tab instead of popup
+    mainWindow.webContents.setWindowOpenHandler(({ url }) => {
+      const u = (url || '').trim()
+      if (u && (u.startsWith('http://') || u.startsWith('https://'))) {
+        createTab(u)
+      }
+      return { action: 'deny' }
+    })
   })
 
   mainWindow.on('resize', updateBrowserViewBounds)
