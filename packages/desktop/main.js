@@ -45,13 +45,14 @@ ipcMain.handle('delete-domain-credential', (_event, domain, credentialId) => {
   return true
 })
 
-async function injectCredentialModal(view, loginForm, savedCreds) {
+async function injectCredentialModal(view, loginForm, savedCreds, options = {}) {
   if (mainWindow) mainWindow.webContents.send('cred-modal-open')
 
   const domain    = JSON.stringify(loginForm.domain)
   const saved     = JSON.stringify(savedCreds)
   const fields    = JSON.stringify(loginForm.fields)
   const submitSel = JSON.stringify(loginForm.submitSelector)
+  const isRetry   = !!(options && options.isRetry)
 
   await view.webContents.executeJavaScript(`
 (function() {
@@ -62,12 +63,13 @@ async function injectCredentialModal(view, loginForm, savedCreds) {
   var FIELDS     = ${fields};
   var SUBMIT_SEL = ${submitSel};
   var SEL_ID     = SAVED.length ? SAVED[0].id : null;
+  var IS_RETRY   = ${isRetry};
 
   // ── shared helpers ────────────────────────────────────────────────────────
-  function dismiss() {
+  function dismiss(signal) {
     var o = document.getElementById('__ai_cred_overlay__');
     if (o) o.remove();
-    console.log('__CRED_DISMISSED__');
+    console.log(signal || '__CRED_DISMISSED__');
   }
 
   function fillPage(fills) {
@@ -174,11 +176,11 @@ async function injectCredentialModal(view, loginForm, savedCreds) {
 
   // ── list view ─────────────────────────────────────────────────────────────
   function renderListView() {
-    titleEl.textContent = SAVED.length > 1 ? 'Saved Logins' : 'Saved Login';
+    titleEl.textContent = IS_RETRY ? 'Login may have failed' : (SAVED.length > 1 ? 'Saved Logins' : 'Saved Login');
     body.innerHTML = '';
 
     var hint = mk('p', { fontSize: '12px', color: '#444', marginBottom: '14px', lineHeight: '1.5' });
-    hint.textContent = 'Use a saved login for this site?';
+    hint.textContent = IS_RETRY ? 'Check your credentials or try a different account.' : 'Use a saved login for this site?';
     body.appendChild(hint);
 
     var list = mk('div', { display: 'flex', flexDirection: 'column', gap: '6px', marginBottom: '16px', maxHeight: '200px', overflowY: 'auto' });
@@ -229,7 +231,7 @@ async function injectCredentialModal(view, loginForm, savedCreds) {
     loginBtn.addEventListener('click', function() {
       var cred = SAVED.find(function(c) { return c.id === SEL_ID; });
       if (!cred) return;
-      dismiss();
+      dismiss('__CRED_SUBMITTED__');
       fillPage((cred.fieldMeta || []).map(function(f) { return { selector: f.selector, value: cred.fields[f.name] || '' }; }));
     });
     var diffBtn = mkBtn('Different account', 'secondary');
@@ -237,16 +239,22 @@ async function injectCredentialModal(view, loginForm, savedCreds) {
     var selfBtn = mkBtn("I'll do it myself", 'ghost');
     selfBtn.style.marginLeft = 'auto';
     selfBtn.addEventListener('click', function() { dismiss(); showAwaitingPill(); });
+    if (IS_RETRY) {
+      var proceedBtn = mkBtn('Proceed anyway', 'ghost');
+      proceedBtn.title = 'I\'m logged in, continue';
+      proceedBtn.addEventListener('click', function() { dismiss('__CRED_PROCEED__'); });
+      actions.appendChild(proceedBtn);
+    }
     actions.appendChild(loginBtn); actions.appendChild(diffBtn); actions.appendChild(selfBtn);
     body.appendChild(actions);
   }
 
   // ── form view ─────────────────────────────────────────────────────────────
   function renderFormView(hintText) {
-    titleEl.textContent = 'Sign In';
+    titleEl.textContent = IS_RETRY ? 'Sign in again' : 'Sign In';
     body.innerHTML = '';
     var hint = mk('p', { fontSize: '12px', color: '#444', marginBottom: '16px', lineHeight: '1.5' });
-    hint.textContent = hintText || 'Enter your credentials to continue.';
+    hint.textContent = hintText || (IS_RETRY ? 'Credentials may have been incorrect.' : 'Enter your credentials to continue.');
     body.appendChild(hint);
 
     var fc = mk('div', { display: 'flex', flexDirection: 'column', gap: '10px', marginBottom: '16px' });
@@ -283,7 +291,7 @@ async function injectCredentialModal(view, loginForm, savedCreds) {
         fieldMeta: FIELDS.map(function(f) { return { name: f.name, type: f.type, label: f.label, selector: f.selector, isPassword: f.isPassword }; })
       };
       console.log('__CRED_SAVE__:' + JSON.stringify({ domain: DOMAIN, credential: cred }));
-      dismiss();
+      dismiss('__CRED_SUBMITTED__');
       fillPage(fills);
     }
 
@@ -293,6 +301,12 @@ async function injectCredentialModal(view, loginForm, savedCreds) {
     var selfBtn = mkBtn("I'll do it myself", 'ghost');
     selfBtn.style.marginLeft = 'auto';
     selfBtn.addEventListener('click', function() { dismiss(); showAwaitingPill(); });
+    if (IS_RETRY) {
+      var proceedBtn = mkBtn('Proceed anyway', 'ghost');
+      proceedBtn.title = 'I\'m logged in, continue';
+      proceedBtn.addEventListener('click', function() { dismiss('__CRED_PROCEED__'); });
+      actions.appendChild(proceedBtn);
+    }
     actions.appendChild(saveBtn); actions.appendChild(selfBtn);
     body.appendChild(actions);
 
@@ -361,11 +375,74 @@ let sidebarWidth = 0
 const tabs = new Map()
 let activeTabId = null
 let nextTabId = 1
+let pendingCredVerifyTabId = null
 
 const TOOLBAR_HEIGHT = 128
 
+const DETECT_LOGIN_FORM_SCRIPT = `
+  (function() {
+    var pwFields = Array.from(document.querySelectorAll('input[type="password"]')).filter(function(el) {
+      var r = el.getBoundingClientRect(); return r.width > 0 && r.height > 0;
+    });
+    if (pwFields.length === 0) return null;
+    var form = pwFields[0].closest('form') || document.body;
+    var allInputs = Array.from(form.querySelectorAll(
+      'input:not([type="hidden"]):not([type="submit"]):not([type="button"]):not([type="checkbox"]):not([type="radio"]):not([type="file"])'
+    )).filter(function(el) { var r = el.getBoundingClientRect(); return r.width > 0 && r.height > 0; });
+    var fields = allInputs.map(function(el) {
+      var label = '';
+      if (el.id) { var lbl = document.querySelector('label[for="' + CSS.escape(el.id) + '"]'); if (lbl) label = lbl.textContent.trim(); }
+      if (!label && el.closest('label')) label = el.closest('label').textContent.replace(el.value, '').trim();
+      if (!label) label = el.placeholder || el.name || el.id || (el.type === 'password' ? 'Password' : 'Field');
+      var selector = el.name ? ('input[name=' + JSON.stringify(el.name) + ']')
+                   : el.id   ? ('#' + CSS.escape(el.id))
+                   : ('input[type=' + JSON.stringify(el.type || 'text') + ']');
+      return { name: el.name || el.id || el.type || 'field', type: el.type || 'text', label: label, selector: selector, isPassword: el.type === 'password' };
+    });
+    var submitEl = form.querySelector('button[type="submit"], input[type="submit"]')
+                || form.querySelector('button:not([type="button"]):not([type="reset"])');
+    var submitSelector = null;
+    if (submitEl) submitSelector = submitEl.id ? ('#' + CSS.escape(submitEl.id)) : (submitEl.name ? ('[name=' + JSON.stringify(submitEl.name) + ']') : 'button[type="submit"]');
+    return { fields: fields, submitSelector: submitSelector, domain: window.location.hostname };
+  })()
+`
+
 const getActiveView = () => activeTabId ? tabs.get(activeTabId)?.view : null
 const getViewForTab = (tabId) => tabId ? tabs.get(tabId)?.view : getActiveView()
+
+function scheduleCredVerify(tabId, view) {
+  const VERIFY_DELAY_MS = 6000
+  let done = false
+  const finish = () => {
+    if (done) return
+    done = true
+    view.webContents.removeListener('did-finish-load', onLoad)
+    clearTimeout(timer)
+    doCredVerify(tabId, view)
+  }
+  const onLoad = () => finish()
+  const timer = setTimeout(finish, VERIFY_DELAY_MS)
+  view.webContents.once('did-finish-load', onLoad)
+}
+
+async function doCredVerify(tabId, view) {
+  try {
+    const url = view.webContents.getURL()
+    if (!url || url.startsWith('about:') || url.startsWith('file:') || url.startsWith('chrome:')) {
+      if (mainWindow) mainWindow.webContents.send('cred-modal-closed')
+      return
+    }
+    const loginForm = await view.webContents.executeJavaScript(DETECT_LOGIN_FORM_SCRIPT)
+    if (loginForm && loginForm.fields && loginForm.fields.length > 0) {
+      const savedCreds = loadCredentials()[loginForm.domain] || []
+      await injectCredentialModal(view, loginForm, savedCreds, { isRetry: true })
+    } else {
+      if (mainWindow) mainWindow.webContents.send('cred-modal-closed')
+    }
+  } catch (_) {
+    if (mainWindow) mainWindow.webContents.send('cred-modal-closed')
+  }
+}
 
 const updateBrowserViewBounds = () => {
   const view = getActiveView()
@@ -669,33 +746,7 @@ function wireViewEvents(tabId, view) {
       try {
         const url = view.webContents.getURL()
         if (!url || url.startsWith('about:') || url.startsWith('file:') || url.startsWith('chrome:')) return
-        const loginForm = await view.webContents.executeJavaScript(`
-          (function() {
-            var pwFields = Array.from(document.querySelectorAll('input[type="password"]')).filter(function(el) {
-              var r = el.getBoundingClientRect(); return r.width > 0 && r.height > 0;
-            });
-            if (pwFields.length === 0) return null;
-            var form = pwFields[0].closest('form') || document.body;
-            var allInputs = Array.from(form.querySelectorAll(
-              'input:not([type="hidden"]):not([type="submit"]):not([type="button"]):not([type="checkbox"]):not([type="radio"]):not([type="file"])'
-            )).filter(function(el) { var r = el.getBoundingClientRect(); return r.width > 0 && r.height > 0; });
-            var fields = allInputs.map(function(el) {
-              var label = '';
-              if (el.id) { var lbl = document.querySelector('label[for="' + CSS.escape(el.id) + '"]'); if (lbl) label = lbl.textContent.trim(); }
-              if (!label && el.closest('label')) label = el.closest('label').textContent.replace(el.value, '').trim();
-              if (!label) label = el.placeholder || el.name || el.id || (el.type === 'password' ? 'Password' : 'Field');
-              var selector = el.name ? ('input[name=' + JSON.stringify(el.name) + ']')
-                           : el.id   ? ('#' + CSS.escape(el.id))
-                           : ('input[type=' + JSON.stringify(el.type || 'text') + ']');
-              return { name: el.name || el.id || el.type || 'field', type: el.type || 'text', label: label, selector: selector, isPassword: el.type === 'password' };
-            });
-            var submitEl = form.querySelector('button[type="submit"], input[type="submit"]')
-                        || form.querySelector('button:not([type="button"]):not([type="reset"])');
-            var submitSelector = null;
-            if (submitEl) submitSelector = submitEl.id ? ('#' + CSS.escape(submitEl.id)) : (submitEl.name ? ('[name=' + JSON.stringify(submitEl.name) + ']') : 'button[type="submit"]');
-            return { fields: fields, submitSelector: submitSelector, domain: window.location.hostname };
-          })()
-        `)
+        const loginForm = await view.webContents.executeJavaScript(DETECT_LOGIN_FORM_SCRIPT)
         if (loginForm && loginForm.fields.length > 0) {
           const savedCreds = loadCredentials()[loginForm.domain] || []
           await injectCredentialModal(view, loginForm, savedCreds)
@@ -761,8 +812,20 @@ function wireViewEvents(tabId, view) {
         saveCredentials(store)
       } catch (e) {}
     }
-    if (message === '__CRED_DISMISSED__') {
+    if (message === '__CRED_SUBMITTED__') {
+      pendingCredVerifyTabId = tabId
+    }
+    if (message === '__CRED_PROCEED__') {
+      pendingCredVerifyTabId = null
       if (mainWindow) mainWindow.webContents.send('cred-modal-closed')
+    }
+    if (message === '__CRED_DISMISSED__') {
+      if (pendingCredVerifyTabId === tabId) {
+        pendingCredVerifyTabId = null
+        scheduleCredVerify(tabId, view)
+      } else {
+        if (mainWindow) mainWindow.webContents.send('cred-modal-closed')
+      }
     }
   })
 
