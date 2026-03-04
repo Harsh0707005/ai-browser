@@ -569,16 +569,35 @@ function wireViewEvents(tabId, view) {
           if (popup.contains(e.target)) return;
           setTimeout(function() {
             var sel = window.getSelection();
+            if (!sel || sel.rangeCount === 0) { hide(); return; }
+            var range = sel.getRangeAt(0);
             var t = (sel ? sel.toString() : '').trim();
-            if (t.length > 3) {
-              selText = t;
-              var range = sel.getRangeAt(0);
-              var rect = range.getBoundingClientRect();
-              var centerX = rect.left + rect.width / 2;
-              var py = rect.top - 120;
-              if (py < 8) py = rect.bottom + 8;
-              show(Math.max(120, Math.min(window.innerWidth - 120, centerX)), py);
-            } else { hide(); }
+            if (t.length <= 3) { hide(); return; }
+            // Don't show for selections inside editable fields (inputs, textareas, contenteditable)
+            function isInEditable(node) {
+              while (node && node !== document.body) {
+                if (node.nodeType === 1) {
+                  var el = node;
+                  var tag = el.tagName;
+                  if (tag === 'INPUT' || tag === 'TEXTAREA') return true;
+                  if (el.isContentEditable) return true;
+                }
+                node = node.parentNode;
+              }
+              return false;
+            }
+            var active = document.activeElement;
+            if ((active && (active.tagName === 'INPUT' || active.tagName === 'TEXTAREA' || active.isContentEditable)) ||
+                isInEditable(range.commonAncestorContainer)) {
+              hide();
+              return;
+            }
+            selText = t;
+            var rect = range.getBoundingClientRect();
+            var centerX = rect.left + rect.width / 2;
+            var py = rect.top - 120;
+            if (py < 8) py = rect.bottom + 8;
+            show(Math.max(120, Math.min(window.innerWidth - 120, centerX)), py);
           }, 10);
         });
         document.addEventListener('mousedown', function(e) {
