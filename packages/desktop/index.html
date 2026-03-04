@@ -46,6 +46,12 @@
           </button>
         </div>
 
+        <button class="nav-btn settings-btn" id="settingsBtn" title="Settings / Saved passwords">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+            <circle cx="12" cy="12" r="3"/>
+            <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"/>
+          </svg>
+        </button>
         <div class="address-bar-container">
           <div class="address-bar">
             <svg class="address-bar-icon" width="16" height="16" viewBox="0 0 16 16" fill="none">
@@ -112,6 +118,28 @@
 
     <div class="agent-border-overlay" id="agentBorderOverlay"></div>
     <div class="agent-toast" id="agentToast">Tab controlled by AI Assistant</div>
+
+    <!-- Settings modal: saved passwords -->
+    <div class="settings-overlay" id="settingsOverlay" aria-hidden="true">
+      <div class="settings-modal" id="settingsModal">
+        <div class="settings-header">
+          <h2 class="settings-title">Settings</h2>
+          <button class="settings-close" id="settingsCloseBtn" title="Close">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6L6 18M6 6l12 12"/></svg>
+          </button>
+        </div>
+        <div class="settings-tabs">
+          <button class="settings-tab active" data-tab="passwords">Saved passwords</button>
+        </div>
+        <div class="settings-content" id="settingsContent">
+          <div class="settings-section" id="passwordsSection">
+            <p class="settings-section-desc">Logins saved when you use “Save & Sign In” on sites.</p>
+            <div class="saved-logins-list" id="savedLoginsList"></div>
+            <p class="settings-empty" id="savedLoginsEmpty">No saved passwords yet.</p>
+          </div>
+        </div>
+      </div>
+    </div>
 
     <script src="renderer.js"></script>
   </body>

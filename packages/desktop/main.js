@@ -1,5 +1,358 @@
 const { app, BrowserWindow, BrowserView, ipcMain, globalShortcut } = require('electron/main')
 const path = require('path')
+const fs = require('fs')
+const crypto = require('crypto')
+
+// ── Credential Storage ──────────────────────────────────────────────────────
+function credentialsPath() {
+  return path.join(app.getPath('userData'), 'credentials.json')
+}
+
+function loadCredentials() {
+  try { return JSON.parse(fs.readFileSync(credentialsPath(), 'utf8')) } catch { return {} }
+}
+
+function saveCredentials(store) {
+  fs.writeFileSync(credentialsPath(), JSON.stringify(store, null, 2), 'utf8')
+}
+
+ipcMain.handle('get-domain-credentials', (_event, domain) => {
+  const store = loadCredentials()
+  return store[domain] || []
+})
+
+ipcMain.handle('save-domain-credential', (_event, domain, credential) => {
+  const store = loadCredentials()
+  if (!store[domain]) store[domain] = []
+  if (!credential.id) credential.id = crypto.randomUUID()
+  const idx = store[domain].findIndex(c => c.id === credential.id)
+  if (idx >= 0) store[domain][idx] = credential
+  else store[domain].push(credential)
+  saveCredentials(store)
+  return true
+})
+
+ipcMain.handle('get-all-credentials', () => {
+  return loadCredentials()
+})
+
+ipcMain.handle('delete-domain-credential', (_event, domain, credentialId) => {
+  const store = loadCredentials()
+  if (!store[domain]) return false
+  store[domain] = store[domain].filter(c => c.id !== credentialId)
+  if (store[domain].length === 0) delete store[domain]
+  saveCredentials(store)
+  return true
+})
+
+async function injectCredentialModal(view, loginForm, savedCreds) {
+  if (mainWindow) mainWindow.webContents.send('cred-modal-open')
+
+  const domain    = JSON.stringify(loginForm.domain)
+  const saved     = JSON.stringify(savedCreds)
+  const fields    = JSON.stringify(loginForm.fields)
+  const submitSel = JSON.stringify(loginForm.submitSelector)
+
+  await view.webContents.executeJavaScript(`
+(function() {
+  if (document.getElementById('__ai_cred_overlay__')) return;
+
+  var DOMAIN     = ${domain};
+  var SAVED      = ${saved};
+  var FIELDS     = ${fields};
+  var SUBMIT_SEL = ${submitSel};
+  var SEL_ID     = SAVED.length ? SAVED[0].id : null;
+
+  // ── shared helpers ────────────────────────────────────────────────────────
+  function dismiss() {
+    var o = document.getElementById('__ai_cred_overlay__');
+    if (o) o.remove();
+    console.log('__CRED_DISMISSED__');
+  }
+
+  function fillPage(fills) {
+    fills.forEach(function(f) {
+      try {
+        var el = document.querySelector(f.selector);
+        if (!el) return;
+        el.focus();
+        var ns = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set;
+        ns ? ns.call(el, f.value) : (el.value = f.value);
+        el.dispatchEvent(new Event('input',  { bubbles: true }));
+        el.dispatchEvent(new Event('change', { bubbles: true }));
+      } catch (_) {}
+    });
+    setTimeout(function() {
+      var btn = SUBMIT_SEL ? document.querySelector(SUBMIT_SEL) : null;
+      if (!btn) btn = document.querySelector('button[type="submit"],input[type="submit"]');
+      if (btn) btn.click();
+    }, 280);
+  }
+
+  function mk(tag, css) {
+    var e = document.createElement(tag);
+    if (css) Object.assign(e.style, css);
+    return e;
+  }
+
+  function mkBtn(label, variant) {
+    var base = {
+      padding: variant === 'ghost' ? '6px 10px' : '8px 18px',
+      borderRadius: '8px', fontSize: '12.5px', fontWeight: '500',
+      fontFamily: 'inherit', cursor: 'pointer', border: 'none',
+      outline: 'none', letterSpacing: '.1px', transition: 'background .12s, opacity .12s',
+      background: variant === 'primary' ? 'rgba(255,255,255,0.92)'
+                : variant === 'secondary' ? 'rgba(255,255,255,0.06)' : 'transparent',
+      color: variant === 'primary' ? '#0a0a0a'
+           : variant === 'secondary' ? '#b0b0b0' : '#4a4a4a',
+    };
+    if (variant === 'secondary') base.border = '1px solid rgba(255,255,255,0.1)';
+    var b = mk('button', base);
+    b.textContent = label;
+    b.addEventListener('mouseover', function() { b.style.opacity = '.75'; });
+    b.addEventListener('mouseout',  function() { b.style.opacity = '1'; });
+    return b;
+  }
+
+  function showAwaitingPill() {
+    if (document.getElementById('__ai_cred_pill__')) return;
+    var pill = mk('div', {
+      position: 'fixed', bottom: '24px', left: '50%', transform: 'translateX(-50%)',
+      zIndex: '2147483646', padding: '8px 18px', borderRadius: '24px',
+      background: 'rgba(20,20,20,0.92)', border: '1px solid rgba(255,255,255,0.08)',
+      color: '#666', fontSize: '12px',
+      fontFamily: '-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif',
+      display: 'flex', alignItems: 'center', gap: '7px',
+      boxShadow: '0 4px 20px rgba(0,0,0,0.5)', pointerEvents: 'none', whiteSpace: 'nowrap',
+      backdropFilter: 'blur(12px)'
+    });
+    pill.id = '__ai_cred_pill__';
+    pill.innerHTML = '<svg width="12" height="12" viewBox="0 0 16 16" fill="none"><circle cx="8" cy="8" r="6" stroke="currentColor" stroke-width="1.5"/><path d="M8 5v3.5l2 2" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>&nbsp;Fill in your login details';
+    document.body.appendChild(pill);
+    setTimeout(function() { if (pill.parentNode) pill.remove(); }, 7000);
+  }
+
+  // ── shell ─────────────────────────────────────────────────────────────────
+  var overlay = mk('div', {
+    position: 'fixed', inset: '0', zIndex: '2147483647',
+    background: 'rgba(0,0,0,0.6)', backdropFilter: 'blur(4px)',
+    display: 'flex', alignItems: 'center', justifyContent: 'center',
+    fontFamily: '-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif'
+  });
+  overlay.id = '__ai_cred_overlay__';
+  overlay.addEventListener('click', function(e) { if (e.target === overlay) dismiss(); });
+
+  var modal = mk('div', {
+    background: '#111', border: '1px solid rgba(255,255,255,0.07)',
+    borderRadius: '16px', width: '400px', maxWidth: 'calc(100vw - 32px)',
+    boxShadow: '0 24px 60px rgba(0,0,0,0.8)', overflow: 'hidden', color: '#e0e0e0'
+  });
+
+  // header
+  var header = mk('div', {
+    display: 'flex', alignItems: 'center', gap: '10px',
+    padding: '18px 20px 14px', borderBottom: '1px solid rgba(255,255,255,0.05)'
+  });
+  var lockIco = mk('span', { color: '#555', display: 'flex', alignItems: 'center', flexShrink: '0' });
+  lockIco.innerHTML = '<svg width="14" height="14" viewBox="0 0 16 16" fill="none"><rect x="4" y="7" width="8" height="7" rx="1.5" stroke="currentColor" stroke-width="1.5"/><path d="M5.5 7V5a2.5 2.5 0 0 1 5 0v2" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>';
+  var titleEl = mk('span', { flex: '1', fontSize: '13.5px', fontWeight: '600', color: '#e8e8e8', letterSpacing: '.1px' });
+  titleEl.textContent = SAVED.length > 0 ? (SAVED.length > 1 ? 'Saved Logins' : 'Saved Login') : 'Sign In';
+  var xBtn = mk('button', {
+    background: 'none', border: 'none', color: '#3a3a3a', fontSize: '20px',
+    cursor: 'pointer', lineHeight: '1', padding: '0', outline: 'none'
+  });
+  xBtn.textContent = '×';
+  xBtn.addEventListener('mouseover', function() { xBtn.style.color = '#888'; });
+  xBtn.addEventListener('mouseout',  function() { xBtn.style.color = '#3a3a3a'; });
+  xBtn.addEventListener('click', dismiss);
+  header.appendChild(lockIco); header.appendChild(titleEl); header.appendChild(xBtn);
+
+  var domEl = mk('div', { padding: '10px 20px 0', fontSize: '11px', color: '#3a3a3a', letterSpacing: '.2px' });
+  domEl.textContent = DOMAIN;
+
+  var body = mk('div', { padding: '16px 20px 20px' });
+
+  // ── list view ─────────────────────────────────────────────────────────────
+  function renderListView() {
+    titleEl.textContent = SAVED.length > 1 ? 'Saved Logins' : 'Saved Login';
+    body.innerHTML = '';
+
+    var hint = mk('p', { fontSize: '12px', color: '#444', marginBottom: '14px', lineHeight: '1.5' });
+    hint.textContent = 'Use a saved login for this site?';
+    body.appendChild(hint);
+
+    var list = mk('div', { display: 'flex', flexDirection: 'column', gap: '6px', marginBottom: '16px', maxHeight: '200px', overflowY: 'auto' });
+
+    SAVED.forEach(function(cred, i) {
+      var selected = i === 0;
+      var item = mk('div', {
+        display: 'flex', alignItems: 'center', gap: '12px', padding: '12px 14px',
+        background: selected ? 'rgba(255,255,255,0.05)' : 'rgba(255,255,255,0.02)',
+        border: '1px solid ' + (selected ? 'rgba(255,255,255,0.15)' : 'rgba(255,255,255,0.06)'),
+        borderRadius: '10px', cursor: 'pointer', transition: 'border-color .12s, background .12s'
+      });
+      var radio = mk('div', {
+        width: '14px', height: '14px', borderRadius: '50%', flexShrink: '0',
+        border: '2px solid ' + (selected ? 'rgba(255,255,255,0.7)' : 'rgba(255,255,255,0.2)'),
+        background: selected ? 'rgba(255,255,255,0.7)' : 'transparent',
+        transition: 'border-color .12s, background .12s'
+      });
+      var info = mk('div', { flex: '1', minWidth: '0' });
+      var lbl = mk('div', { fontSize: '13px', color: '#e0e0e0', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', fontWeight: '500' });
+      lbl.textContent = cred.label || cred.id || DOMAIN;
+      var sub = mk('div', { fontSize: '11px', color: '#3a3a3a', marginTop: '3px' });
+      sub.textContent = (cred.fieldMeta || []).map(function(f) {
+        return f.isPassword ? f.label + ': ●●●●' : f.label + ': ' + (cred.fields[f.name] || '');
+      }).join('  ·  ');
+      info.appendChild(lbl); info.appendChild(sub);
+      item.appendChild(radio); item.appendChild(info);
+      item.addEventListener('click', function() {
+        SEL_ID = cred.id;
+        list.querySelectorAll('[data-ci]').forEach(function(it) {
+          it.style.background = 'rgba(255,255,255,0.02)';
+          it.style.borderColor = 'rgba(255,255,255,0.06)';
+          it._r.style.borderColor = 'rgba(255,255,255,0.2)';
+          it._r.style.background = 'transparent';
+        });
+        item.style.background = 'rgba(255,255,255,0.05)';
+        item.style.borderColor = 'rgba(255,255,255,0.15)';
+        radio.style.borderColor = 'rgba(255,255,255,0.7)';
+        radio.style.background = 'rgba(255,255,255,0.7)';
+      });
+      item._r = radio; item.setAttribute('data-ci', '1');
+      list.appendChild(item);
+    });
+    body.appendChild(list);
+
+    var actions = mk('div', { display: 'flex', gap: '8px', alignItems: 'center' });
+    var loginBtn = mkBtn('Login', 'primary');
+    loginBtn.addEventListener('click', function() {
+      var cred = SAVED.find(function(c) { return c.id === SEL_ID; });
+      if (!cred) return;
+      dismiss();
+      fillPage((cred.fieldMeta || []).map(function(f) { return { selector: f.selector, value: cred.fields[f.name] || '' }; }));
+    });
+    var diffBtn = mkBtn('Different account', 'secondary');
+    diffBtn.addEventListener('click', function() { renderFormView('Enter different login details:'); });
+    var selfBtn = mkBtn("I'll do it myself", 'ghost');
+    selfBtn.style.marginLeft = 'auto';
+    selfBtn.addEventListener('click', function() { dismiss(); showAwaitingPill(); });
+    actions.appendChild(loginBtn); actions.appendChild(diffBtn); actions.appendChild(selfBtn);
+    body.appendChild(actions);
+  }
+
+  // ── form view ─────────────────────────────────────────────────────────────
+  function renderFormView(hintText) {
+    titleEl.textContent = 'Sign In';
+    body.innerHTML = '';
+    var hint = mk('p', { fontSize: '12px', color: '#444', marginBottom: '16px', lineHeight: '1.5' });
+    hint.textContent = hintText || 'Enter your credentials to continue.';
+    body.appendChild(hint);
+
+    var fc = mk('div', { display: 'flex', flexDirection: 'column', gap: '10px', marginBottom: '16px' });
+    var inputs = [];
+    FIELDS.forEach(function(field) {
+      var row = mk('div', { display: 'flex', flexDirection: 'column', gap: '5px' });
+      var lbl = mk('label', { fontSize: '11px', color: '#3a3a3a', fontWeight: '500', letterSpacing: '.3px', textTransform: 'uppercase' });
+      lbl.textContent = field.label;
+      var inp = mk('input', {
+        background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.08)',
+        borderRadius: '8px', padding: '10px 12px', color: '#e0e0e0',
+        fontSize: '13px', fontFamily: 'inherit', outline: 'none',
+        width: '100%', boxSizing: 'border-box', transition: 'border-color .12s'
+      });
+      inp.type = field.isPassword ? 'password' : 'text';
+      inp.placeholder = field.isPassword ? '••••••••' : field.label;
+      inp.autocomplete = field.isPassword ? 'current-password' : 'username';
+      inp.dataset.fn  = field.name;
+      inp.dataset.sel = field.selector;
+      inp.addEventListener('focus', function() { inp.style.borderColor = 'rgba(255,255,255,0.25)'; });
+      inp.addEventListener('blur',  function() { inp.style.borderColor = 'rgba(255,255,255,0.08)'; });
+      row.appendChild(lbl); row.appendChild(inp); fc.appendChild(row);
+      inputs.push(inp);
+    });
+    body.appendChild(fc);
+
+    function doSubmit() {
+      var vals = {}; var fills = [];
+      inputs.forEach(function(inp) { vals[inp.dataset.fn] = inp.value; fills.push({ selector: inp.dataset.sel, value: inp.value }); });
+      var firstNonPw = FIELDS.find(function(f) { return !f.isPassword; });
+      var credLabel = firstNonPw ? (vals[firstNonPw.name] || DOMAIN) : DOMAIN;
+      var cred = {
+        label: credLabel, fields: vals,
+        fieldMeta: FIELDS.map(function(f) { return { name: f.name, type: f.type, label: f.label, selector: f.selector, isPassword: f.isPassword }; })
+      };
+      console.log('__CRED_SAVE__:' + JSON.stringify({ domain: DOMAIN, credential: cred }));
+      dismiss();
+      fillPage(fills);
+    }
+
+    var actions = mk('div', { display: 'flex', gap: '8px', alignItems: 'center' });
+    var saveBtn = mkBtn('Save & Sign In', 'primary');
+    saveBtn.addEventListener('click', doSubmit);
+    var selfBtn = mkBtn("I'll do it myself", 'ghost');
+    selfBtn.style.marginLeft = 'auto';
+    selfBtn.addEventListener('click', function() { dismiss(); showAwaitingPill(); });
+    actions.appendChild(saveBtn); actions.appendChild(selfBtn);
+    body.appendChild(actions);
+
+    inputs.forEach(function(inp) { inp.addEventListener('keydown', function(e) { if (e.key === 'Enter') { e.preventDefault(); doSubmit(); } }); });
+    if (inputs[0]) setTimeout(function() { inputs[0].focus(); }, 80);
+  }
+
+  // ── mount ─────────────────────────────────────────────────────────────────
+  modal.appendChild(header);
+  modal.appendChild(domEl);
+  modal.appendChild(body);
+  overlay.appendChild(modal);
+  document.body.appendChild(overlay);
+
+  if (SAVED.length > 0) renderListView();
+  else renderFormView();
+})()
+  `)
+}
+
+ipcMain.handle('fill-login-fields', async (_event, tabId, fills) => {
+  // fills: [{selector, value}] — values come from local storage, never from the backend WS
+  const view = getViewForTab(tabId)
+  if (!view) return { success: false }
+  for (const { selector, value } of fills) {
+    try {
+      await view.webContents.executeJavaScript(`
+        (function() {
+          var el = document.querySelector(${JSON.stringify(selector)});
+          if (!el) return false;
+          el.focus();
+          var nativeSetter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value').set;
+          if (nativeSetter) nativeSetter.call(el, ${JSON.stringify(value)});
+          else el.value = ${JSON.stringify(value)};
+          el.dispatchEvent(new Event('input', { bubbles: true }));
+          el.dispatchEvent(new Event('change', { bubbles: true }));
+          return true;
+        })()
+      `)
+    } catch (_) {}
+  }
+  return { success: true }
+})
+
+ipcMain.handle('submit-login-form', async (_event, tabId, submitSelector) => {
+  const view = getViewForTab(tabId)
+  if (!view) return { success: false }
+  try {
+    await view.webContents.executeJavaScript(`
+      (function() {
+        var sel = ${JSON.stringify(submitSelector || '')};
+        var el = sel ? document.querySelector(sel) : null;
+        if (!el) el = document.querySelector('button[type="submit"], input[type="submit"], button:not([type="button"]):not([type="reset"])');
+        if (el) { el.click(); return true; }
+        return false;
+      })()
+    `)
+  } catch (_) {}
+  return { success: true }
+})
 
 let mainWindow
 let sidebarOpen = false
@@ -282,6 +635,45 @@ function wireViewEvents(tabId, view) {
         }
       `)
     }
+
+    // ── Login form detection ───────────────────────────────────────────────
+    setTimeout(async () => {
+      try {
+        const url = view.webContents.getURL()
+        if (!url || url.startsWith('about:') || url.startsWith('file:') || url.startsWith('chrome:')) return
+        const loginForm = await view.webContents.executeJavaScript(`
+          (function() {
+            var pwFields = Array.from(document.querySelectorAll('input[type="password"]')).filter(function(el) {
+              var r = el.getBoundingClientRect(); return r.width > 0 && r.height > 0;
+            });
+            if (pwFields.length === 0) return null;
+            var form = pwFields[0].closest('form') || document.body;
+            var allInputs = Array.from(form.querySelectorAll(
+              'input:not([type="hidden"]):not([type="submit"]):not([type="button"]):not([type="checkbox"]):not([type="radio"]):not([type="file"])'
+            )).filter(function(el) { var r = el.getBoundingClientRect(); return r.width > 0 && r.height > 0; });
+            var fields = allInputs.map(function(el) {
+              var label = '';
+              if (el.id) { var lbl = document.querySelector('label[for="' + CSS.escape(el.id) + '"]'); if (lbl) label = lbl.textContent.trim(); }
+              if (!label && el.closest('label')) label = el.closest('label').textContent.replace(el.value, '').trim();
+              if (!label) label = el.placeholder || el.name || el.id || (el.type === 'password' ? 'Password' : 'Field');
+              var selector = el.name ? ('input[name=' + JSON.stringify(el.name) + ']')
+                           : el.id   ? ('#' + CSS.escape(el.id))
+                           : ('input[type=' + JSON.stringify(el.type || 'text') + ']');
+              return { name: el.name || el.id || el.type || 'field', type: el.type || 'text', label: label, selector: selector, isPassword: el.type === 'password' };
+            });
+            var submitEl = form.querySelector('button[type="submit"], input[type="submit"]')
+                        || form.querySelector('button:not([type="button"]):not([type="reset"])');
+            var submitSelector = null;
+            if (submitEl) submitSelector = submitEl.id ? ('#' + CSS.escape(submitEl.id)) : (submitEl.name ? ('[name=' + JSON.stringify(submitEl.name) + ']') : 'button[type="submit"]');
+            return { fields: fields, submitSelector: submitSelector, domain: window.location.hostname };
+          })()
+        `)
+        if (loginForm && loginForm.fields.length > 0) {
+          const savedCreds = loadCredentials()[loginForm.domain] || []
+          await injectCredentialModal(view, loginForm, savedCreds)
+        }
+      } catch (_) {}
+    }, 1800)
   })
 
   view.webContents.on('did-fail-load', (event, errorCode, errorDescription) => {
@@ -330,6 +722,19 @@ function wireViewEvents(tabId, view) {
           mainWindow.webContents.focus()
         }
       } catch (e) {}
+    }
+    if (message.startsWith('__CRED_SAVE__:')) {
+      try {
+        const { domain, credential } = JSON.parse(message.substring('__CRED_SAVE__:'.length))
+        const store = loadCredentials()
+        if (!store[domain]) store[domain] = []
+        credential.id = crypto.randomUUID()
+        store[domain].push(credential)
+        saveCredentials(store)
+      } catch (e) {}
+    }
+    if (message === '__CRED_DISMISSED__') {
+      if (mainWindow) mainWindow.webContents.send('cred-modal-closed')
     }
   })
 
@@ -488,6 +893,18 @@ ipcMain.on('get-navigation-state', () => {
 ipcMain.on('go-back', () => { const v = getActiveView(); if (v) v.webContents.goBack() })
 ipcMain.on('go-forward', () => { const v = getActiveView(); if (v) v.webContents.goForward() })
 ipcMain.on('reload', () => { const v = getActiveView(); if (v) v.webContents.reload() })
+
+// Hide/show the active BrowserView so overlays in the renderer HTML become visible
+ipcMain.on('hide-browser-view', () => {
+  if (!mainWindow || !activeTabId) return
+  const tab = tabs.get(activeTabId)
+  if (tab) mainWindow.removeBrowserView(tab.view)
+})
+ipcMain.on('show-browser-view', () => {
+  if (!mainWindow || !activeTabId) return
+  const tab = tabs.get(activeTabId)
+  if (tab) { mainWindow.addBrowserView(tab.view); updateBrowserViewBounds() }
+})
 ipcMain.on('close-window', () => { if (mainWindow) mainWindow.close() })
 ipcMain.on('minimize-window', () => { if (mainWindow) mainWindow.minimize() })
 

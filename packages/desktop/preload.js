@@ -25,6 +25,10 @@ contextBridge.exposeInMainWorld('electronAPI', {
   executeAction: (action, tabId) => ipcRenderer.invoke('execute-action', action, tabId),
   waitForLoad: (tabId) => ipcRenderer.invoke('wait-for-load', tabId),
 
+  getAllCredentials: () => ipcRenderer.invoke('get-all-credentials'),
+  saveCredential: (domain, credential) => ipcRenderer.invoke('save-domain-credential', domain, credential),
+  deleteCredential: (domain, credentialId) => ipcRenderer.invoke('delete-domain-credential', domain, credentialId),
+
   onNavigationStart: (callback) => ipcRenderer.on('navigation-start', callback),
   onNavigationComplete: (callback) => ipcRenderer.on('navigation-complete', (event, data) => callback(data)),
   onNavigationError: (callback) => ipcRenderer.on('navigation-error', (event, data) => callback(data)),
@@ -34,5 +38,11 @@ contextBridge.exposeInMainWorld('electronAPI', {
   onTabsUpdated: (callback) => ipcRenderer.on('tabs-updated', (event, data) => callback(data)),
   onSelectionAction: (callback) => ipcRenderer.on('selection-action', (event, data) => callback(data)),
 
-  removeAllListeners: (channel) => ipcRenderer.removeAllListeners(channel)
+  removeAllListeners: (channel) => ipcRenderer.removeAllListeners(channel),
+
+  hideBrowserView: () => ipcRenderer.send('hide-browser-view'),
+  showBrowserView: () => ipcRenderer.send('show-browser-view'),
+
+  onCredModalOpen: (cb) => ipcRenderer.on('cred-modal-open', cb),
+  onCredModalClosed: (cb) => ipcRenderer.on('cred-modal-closed', cb)
 })

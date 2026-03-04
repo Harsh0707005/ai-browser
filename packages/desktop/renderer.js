@@ -13,6 +13,11 @@ const modelSelect = document.getElementById('modelSelect')
 const tabList = document.getElementById('tabList')
 const newTabBtn = document.getElementById('newTabBtn')
 const sidebarResizeHandle = document.getElementById('sidebarResizeHandle')
+const settingsBtn = document.getElementById('settingsBtn')
+const settingsOverlay = document.getElementById('settingsOverlay')
+const settingsCloseBtn = document.getElementById('settingsCloseBtn')
+const savedLoginsList = document.getElementById('savedLoginsList')
+const savedLoginsEmpty = document.getElementById('savedLoginsEmpty')
 
 const SIDEBAR_MIN_WIDTH = 280
 const SIDEBAR_MAX_WIDTH = 700
@@ -113,6 +118,193 @@ forwardBtn.addEventListener('click', (e) => {
 reloadBtn.addEventListener('click', () => { if (window.electronAPI) window.electronAPI.reload() })
 sidebarToggle.addEventListener('click', () => { toggleSidebar() })
 sidebarCloseBtn.addEventListener('click', () => { toggleSidebar() })
+
+// ── Settings / Saved passwords ─────────────────────────────────────────────
+function openSettings() {
+  if (!settingsOverlay) return
+  if (window.electronAPI) window.electronAPI.hideBrowserView()
+  settingsOverlay.setAttribute('aria-hidden', 'false')
+  loadSavedLogins()
+}
+
+function closeSettings() {
+  if (!settingsOverlay) return
+  settingsOverlay.setAttribute('aria-hidden', 'true')
+  if (window.electronAPI) window.electronAPI.showBrowserView()
+}
+
+async function loadSavedLogins() {
+  if (!savedLoginsList || !savedLoginsEmpty) return
+  if (!window.electronAPI || !window.electronAPI.getAllCredentials) {
+    savedLoginsList.innerHTML = ''
+    savedLoginsEmpty.style.display = 'block'
+    return
+  }
+  const store = await window.electronAPI.getAllCredentials()
+  const domains = Object.keys(store).filter(d => store[d] && store[d].length > 0)
+  savedLoginsList.innerHTML = ''
+  if (domains.length === 0) {
+    savedLoginsEmpty.style.display = 'block'
+    return
+  }
+  savedLoginsEmpty.style.display = 'none'
+  for (const domain of domains) {
+    const domainLabel = document.createElement('div')
+    domainLabel.className = 'saved-login-domain'
+    domainLabel.textContent = domain
+    savedLoginsList.appendChild(domainLabel)
+    for (const cred of store[domain]) {
+      const item = document.createElement('div')
+      item.className = 'saved-login-item'
+      item.dataset.domain = domain
+      item.dataset.credentialId = cred.id || ''
+      const meta = cred.fieldMeta || []
+
+      // ── View mode ─────────────────────────────────────────────────────
+      const viewWrap = document.createElement('div')
+      viewWrap.className = 'saved-login-view'
+      const info = document.createElement('div')
+      info.className = 'saved-login-info'
+      const label = document.createElement('div')
+      label.className = 'saved-login-label'
+      label.textContent = cred.label || domain
+      info.appendChild(label)
+      const fieldsEl = document.createElement('div')
+      fieldsEl.className = 'saved-login-fields'
+      meta.forEach(f => {
+        const fieldWrap = document.createElement('div')
+        fieldWrap.className = 'saved-login-field'
+        const nameSpan = document.createElement('span')
+        nameSpan.textContent = (f.label || f.name) + ': '
+        const valueSpan = document.createElement('span')
+        valueSpan.className = 'saved-login-field-value'
+        valueSpan.textContent = f.isPassword ? '••••••••' : (cred.fields[f.name] || '—')
+        valueSpan.dataset.isPassword = f.isPassword ? '1' : '0'
+        valueSpan.dataset.value = cred.fields[f.name] || ''
+        fieldWrap.appendChild(nameSpan)
+        fieldWrap.appendChild(valueSpan)
+        fieldsEl.appendChild(fieldWrap)
+      })
+      info.appendChild(fieldsEl)
+      const actions = document.createElement('div')
+      actions.className = 'saved-login-actions'
+      const showBtn = document.createElement('button')
+      showBtn.className = 'saved-login-btn'
+      showBtn.type = 'button'
+      showBtn.title = 'Show password'
+      showBtn.innerHTML = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>'
+      showBtn.addEventListener('click', () => {
+        const values = item.querySelectorAll('.saved-login-field-value[data-is-password="1"]')
+        const first = values[0]
+        const isRevealed = first && first.classList.contains('revealed')
+        values.forEach(v => {
+          v.classList.toggle('revealed', !isRevealed)
+          v.textContent = isRevealed ? '••••••••' : (v.dataset.value || '')
+        })
+        showBtn.title = isRevealed ? 'Show password' : 'Hide password'
+      })
+      const editBtn = document.createElement('button')
+      editBtn.className = 'saved-login-btn edit'
+      editBtn.type = 'button'
+      editBtn.title = 'Edit'
+      editBtn.innerHTML = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>'
+      editBtn.addEventListener('click', () => {
+        item.classList.add('editing')
+        const firstInput = item.querySelector('.saved-login-edit-input')
+        if (firstInput) firstInput.focus()
+      })
+      const deleteBtn = document.createElement('button')
+      deleteBtn.className = 'saved-login-btn delete'
+      deleteBtn.type = 'button'
+      deleteBtn.title = 'Remove'
+      deleteBtn.innerHTML = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M3 6h18M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/><line x1="10" y1="11" x2="10" y2="17"/><line x1="14" y1="11" x2="14" y2="17"/></svg>'
+      deleteBtn.addEventListener('click', async () => {
+        if (!window.electronAPI || !window.electronAPI.deleteCredential) return
+        const ok = await window.electronAPI.deleteCredential(domain, cred.id)
+        if (ok) loadSavedLogins()
+      })
+      actions.appendChild(showBtn)
+      actions.appendChild(editBtn)
+      actions.appendChild(deleteBtn)
+      viewWrap.appendChild(info)
+      viewWrap.appendChild(actions)
+      item.appendChild(viewWrap)
+
+      // ── Edit mode ─────────────────────────────────────────────────────
+      const editWrap = document.createElement('div')
+      editWrap.className = 'saved-login-edit'
+      const labelRow = document.createElement('div')
+      labelRow.className = 'saved-login-edit-row'
+      const labelLabel = document.createElement('label')
+      labelLabel.textContent = 'Label (e.g. username or email)'
+      const labelInput = document.createElement('input')
+      labelInput.type = 'text'
+      labelInput.className = 'saved-login-edit-input'
+      labelInput.placeholder = 'Login label'
+      labelInput.value = cred.label || ''
+      labelRow.appendChild(labelLabel)
+      labelRow.appendChild(labelInput)
+      editWrap.appendChild(labelRow)
+      const editInputs = []
+      meta.forEach(f => {
+        const row = document.createElement('div')
+        row.className = 'saved-login-edit-row'
+        const lab = document.createElement('label')
+        lab.textContent = f.label || f.name
+        const inp = document.createElement('input')
+        inp.className = 'saved-login-edit-input'
+        inp.type = f.isPassword ? 'password' : 'text'
+        inp.placeholder = f.isPassword ? '••••••••' : (f.label || f.name)
+        inp.value = cred.fields[f.name] || ''
+        inp.dataset.fieldName = f.name
+        row.appendChild(lab)
+        row.appendChild(inp)
+        editWrap.appendChild(row)
+        editInputs.push({ name: f.name, input: inp })
+      })
+      const editActions = document.createElement('div')
+      editActions.className = 'saved-login-edit-actions'
+      const saveBtn = document.createElement('button')
+      saveBtn.className = 'saved-login-btn save'
+      saveBtn.type = 'button'
+      saveBtn.textContent = 'Save'
+      saveBtn.addEventListener('click', async () => {
+        const newLabel = labelInput.value.trim() || cred.label || domain
+        const newFields = {}
+        editInputs.forEach(({ name, input }) => { newFields[name] = input.value })
+        const updated = {
+          id: cred.id,
+          label: newLabel,
+          fields: newFields,
+          fieldMeta: cred.fieldMeta
+        }
+        if (window.electronAPI && window.electronAPI.saveCredential) {
+          await window.electronAPI.saveCredential(domain, updated)
+          item.classList.remove('editing')
+          loadSavedLogins()
+        }
+      })
+      const cancelBtn = document.createElement('button')
+      cancelBtn.className = 'saved-login-btn'
+      cancelBtn.type = 'button'
+      cancelBtn.textContent = 'Cancel'
+      cancelBtn.addEventListener('click', () => {
+        item.classList.remove('editing')
+      })
+      editActions.appendChild(saveBtn)
+      editActions.appendChild(cancelBtn)
+      editWrap.appendChild(editActions)
+      item.appendChild(editWrap)
+
+      savedLoginsList.appendChild(item)
+    }
+  }
+}
+
+const toolbarEl = document.querySelector('.toolbar')
+if (toolbarEl) toolbarEl.addEventListener('click', (e) => { if (e.target.closest('#settingsBtn')) { e.preventDefault(); openSettings() } })
+if (settingsCloseBtn) settingsCloseBtn.addEventListener('click', closeSettings)
+if (settingsOverlay) settingsOverlay.addEventListener('click', (e) => { if (e.target === settingsOverlay) closeSettings() })
 
 let sidebarResizing = false
 let sidebarResizeStartX = 0
@@ -650,6 +842,8 @@ async function executeSingleStep(plan, stepIndex, tabId, planId, completedSteps)
 
   while (!stepComplete && actionCount < MAX_ACTIONS_PER_STEP) {
     if (agentAbortRequested) return
+    await waitForCredModal()
+    if (agentAbortRequested) return
     actionCount++
     await delay(500)
 
@@ -959,6 +1153,10 @@ if (window.electronAPI) {
 }
 
 document.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape' && settingsOverlay && settingsOverlay.getAttribute('aria-hidden') === 'false') {
+    closeSettings()
+    return
+  }
   if ((e.metaKey || e.ctrlKey) && e.key === 't') {
     e.preventDefault()
     if (window.electronAPI) window.electronAPI.createTab()
@@ -971,3 +1169,23 @@ document.addEventListener('keydown', (e) => {
 
 addressInput.value = currentUrl
 if (window.electronAPI) setTimeout(() => { window.electronAPI.getNavigationState() }, 500)
+
+// ── Credential modal pause gate ───────────────────────────────────────────────
+// The modal is injected into BrowserView pages by main.js.
+// While it is open, agent plan execution is paused here in the renderer.
+let _credModalOpen = false
+let _credModalResolvers = []
+
+function waitForCredModal() {
+  if (!_credModalOpen) return Promise.resolve()
+  return new Promise(resolve => _credModalResolvers.push(resolve))
+}
+
+if (window.electronAPI) {
+  window.electronAPI.onCredModalOpen(() => { _credModalOpen = true })
+  window.electronAPI.onCredModalClosed(() => {
+    _credModalOpen = false
+    _credModalResolvers.forEach(r => r())
+    _credModalResolvers = []
+  })
+}
