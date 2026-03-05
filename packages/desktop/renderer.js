@@ -88,12 +88,13 @@ function sendRequest(msg) {
     pendingRequests[requestId] = { resolve, reject }
     ws.send(JSON.stringify(msg))
 
+    const timeoutMs = msg.type === 'plan' ? 180000 : 30000
     setTimeout(() => {
       if (pendingRequests[requestId]) {
         delete pendingRequests[requestId]
         reject(new Error('Request timeout'))
       }
-    }, 30000)
+    }, timeoutMs)
   })
 }
 

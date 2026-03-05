@@ -16,7 +16,9 @@ export async function handleStep(data) {
     ? `\nACTIONS ALREADY DONE FOR THIS STEP (do not repeat these):\n${actionsTakenThisStep.map(a => `- ${a.action}${a.url ? ' to ' + a.url : ''}${a.elementId != null ? ' element ' + a.elementId : ''}${a.text ? ' "' + a.text + '"' : ''}`).join('\n')}\nIf this step is now complete, return {"action":"done","thought":"reason"}.`
     : ''
 
-  const dateBlock = clientDateTime ? `CURRENT DATE/TIME: ${clientDateTime}\n\n` : ''
+  const dateBlock = clientDateTime
+    ? `CURRENT DATE/TIME: ${clientDateTime}\nWhen the user uses relative time references (e.g. "in 1 hour", "tomorrow", "next week", "this evening", "after 30 minutes"), resolve them to exact dates/times based on CURRENT DATE/TIME above.\n\n`
+    : ''
 
   const prompt = `You are an AI browser automation agent executing a plan.
 ${dateBlock}GOAL: "${goal}"

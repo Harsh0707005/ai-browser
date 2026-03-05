@@ -68,7 +68,9 @@ You may call at most ONE of these tools by returning a JSON object with type "to
     ? `PREVIOUS CONVERSATION CONTEXT:\n${conversationContext.trim()}\n\nCURRENT USER MESSAGE: `
     : 'USER REQUEST: '
 
-  const dateBlock = clientDateTime ? `CURRENT DATE/TIME: ${clientDateTime}\n` : ''
+  const dateBlock = clientDateTime
+    ? `CURRENT DATE/TIME: ${clientDateTime}\nWhen the user uses relative time references (e.g. "in 1 hour", "tomorrow", "next week", "this evening", "after 30 minutes"), resolve them to exact dates/times based on CURRENT DATE/TIME above and use those exact values in tool arguments.\n`
+    : ''
 
   const prompt = `You are an AI browser assistant. Decide: answer directly, call an external tool, or browse the web.
 ${dateBlock}
@@ -124,89 +126,135 @@ Respond with ONLY valid JSON.`
 
   const parsed = parseJSON(text)
 
-  // ── External tool call ───────────────────────────────────────────────────
+  // ── Tool call loop (supports chained multi-step tool calls) ─────────────
   if (parsed?.type === 'tool_call' && parsed.tool) {
     if (!isComposioReady()) {
       return { success: false, error: 'Tool calling is not available right now' }
     }
 
-    try {
-      const connTimeout = new Promise((_, reject) =>
-        setTimeout(() => reject(new Error('Connection check timed out after 10s')), 10000)
-      )
-      const conn = await Promise.race([ensureToolConnection(parsed.tool, 'default'), connTimeout])
-      if (!conn.connected) {
-        if (conn.redirectUrl) {
-          console.log(`[PLAN] Prompted user to connect ${conn.serviceLabel}`)
-          return { success: true, needsConnection: true, serviceLabel: conn.serviceLabel, redirectUrl: conn.redirectUrl }
+    const MAX_TOOL_CALLS = 6
+    const toolHistory = []
+    let current = parsed
+
+    while (current?.type === 'tool_call' && current.tool && toolHistory.length < MAX_TOOL_CALLS) {
+      let toolResult
+      try {
+        const connTimeout = new Promise((_, reject) =>
+          setTimeout(() => reject(new Error('Connection check timed out after 10s')), 10000)
+        )
+        const conn = await Promise.race([ensureToolConnection(current.tool, 'default'), connTimeout])
+        if (!conn.connected) {
+          if (conn.redirectUrl) {
+            console.log(`[PLAN] Prompted user to connect ${conn.serviceLabel}`)
+            return { success: true, needsConnection: true, serviceLabel: conn.serviceLabel, redirectUrl: conn.redirectUrl }
+          }
+          return { success: false, error: `${conn.serviceLabel ?? 'Service'} is not connected` }
         }
-        return { success: false, error: `${conn.serviceLabel ?? 'Service'} is not connected` }
+
+        const execTimeout = new Promise((_, reject) =>
+          setTimeout(() => reject(new Error('Tool execution timed out after 15s')), 15000)
+        )
+        toolResult = await Promise.race([
+          executeComposioTool(current.tool, current.arguments || {}, 'default'),
+          execTimeout,
+        ])
+        console.log(`[PLAN] Tool ${toolHistory.length + 1}: ${current.tool} | keys:`, toolResult ? Object.keys(toolResult).join(',') : 'null')
+        toolHistory.push({ slug: current.tool, result: toolResult })
+      } catch (e) {
+        console.error('[PLAN] Tool execution failed:', e.message)
+        const msgLower = String(e.message || '').toLowerCase()
+        if (
+          msgLower.includes('no connected account found') ||
+          msgLower.includes('connectedaccountnotfound') ||
+          msgLower.includes('no active connection exists for toolkit')
+        ) {
+          try {
+            const conn = await ensureToolConnection(current.tool, 'default', { force: true })
+            if (!conn.connected && conn.redirectUrl) {
+              return { success: true, needsConnection: true, serviceLabel: conn.serviceLabel, redirectUrl: conn.redirectUrl }
+            }
+          } catch (_) {}
+        }
+        try {
+          const errMsg = (await callLLM(
+            `The user asked: "${message}"\n\nThe tool "${current.tool}" failed with this error:\n${e.message}\n\nWrite a short, friendly explanation of what went wrong and what the user can try instead. Plain text, 1-3 sentences.`,
+            model,
+            { json: false }
+          )).trim()
+          return { success: true, direct: true, response: errMsg }
+        } catch (_) {
+          return { success: false, error: e.message }
+        }
       }
 
-      const execTimeout = new Promise((_, reject) =>
-        setTimeout(() => reject(new Error('Tool execution timed out after 15s')), 15000)
-      )
-      const toolResult = await Promise.race([
-        executeComposioTool(parsed.tool, parsed.arguments || {}, 'default'),
-        execTimeout,
-      ])
-      console.log('[PLAN] Tool result:', parsed.tool, '| keys:', toolResult ? Object.keys(toolResult).join(',') : 'null')
+      // Ask LLM: are all tasks done, or is another tool call needed?
+      const historyBlock = toolHistory.map((h, i) =>
+        `Step ${i + 1}: Called tool "${h.slug}" → ${JSON.stringify(h.result, null, 2)}`
+      ).join('\n\n')
 
-      // Interpret raw result into natural language
-      const interpretPrompt = `The user asked: "${message}"
+      const continuePrompt = `You are an AI assistant completing a multi-step task using external tools.
+${dateBlock}
+${toolsBlock}
+ORIGINAL REQUEST: "${message}"
 
-You called the tool "${parsed.tool}" and got this result:
-${JSON.stringify(toolResult, null, 2)}
+COMPLETED TOOL CALLS:
+${historyBlock}
+
+Review the original request. Decide what to do next:
+- If ALL tasks from the original request are now complete, provide a final comprehensive answer.
+- If another tool call is still needed to fulfill the original request, call it now.
+- Do NOT call a tool that already succeeded above.
+
+If all tasks are complete:
+{"type": "direct", "response": "comprehensive markdown answer covering all results — never fabricate details not present in the results above"}
+
+If another tool call is needed:
+{"type": "tool_call", "tool": "<exact slug>", "arguments": {<valid JSON>}}
+
+Respond with ONLY valid JSON.`
+
+      let nextText
+      try {
+        const llmTimeout = new Promise((_, reject) =>
+          setTimeout(() => reject(new Error('LLM call timed out after 20s')), 20000)
+        )
+        nextText = await Promise.race([callLLM(continuePrompt, model, { json: true }), llmTimeout])
+        current = parseJSON(nextText)
+      } catch (_) {
+        current = null
+        break
+      }
+    }
+
+    // LLM provided a direct answer after completing all tool calls
+    if (current?.type === 'direct' && current.response) {
+      console.log(`[PLAN] Multi-tool complete (${toolHistory.length} calls): ${current.response.substring(0, 80)}...`)
+      return { success: true, direct: true, response: current.response }
+    }
+
+    // Fallback: interpret all accumulated tool results into a natural answer
+    const allResults = toolHistory
+      .map((h, i) => `Tool ${i + 1} (${h.slug}):\n${JSON.stringify(h.result, null, 2)}`)
+      .join('\n\n')
+
+    const interpretPrompt = `The user asked: "${message}"
+
+You called ${toolHistory.length} tool(s) and got these results:
+${allResults}
 
 Write a clear, natural answer based only on this data.
 - Summarize meaningfully (events: name/time/date; emails: subject/sender; docs: title; etc.)
 - Use markdown for readability.
-- If empty/no results, say so plainly.
-- Do NOT show raw JSON. Do NOT fabricate anything not in the result.`
+- Do NOT show raw JSON. Do NOT fabricate anything not in the results.`
 
-      let naturalAnswer
-      try {
-        naturalAnswer = (await callLLM(interpretPrompt, model, { json: false })).trim()
-      } catch (_) {
-        naturalAnswer = `\`\`\`json\n${JSON.stringify(toolResult, null, 2)}\n\`\`\``
-      }
-
-      return { success: true, direct: true, response: naturalAnswer }
-    } catch (e) {
-      console.error('[PLAN] Tool execution failed:', e.message)
-
-      // Special handling: if the error indicates the user has no connected account
-      // for this toolkit, try to initiate a fresh connection and surface a link.
-      const msgLower = String(e.message || '').toLowerCase()
-      if (
-        msgLower.includes('no connected account found') ||
-        msgLower.includes('connectedaccountnotfound') ||
-        msgLower.includes('no active connection exists for toolkit')
-      ) {
-        try {
-          // Force a fresh initiation in case the previously-detected ACTIVE
-          // connection is stale or not valid for this toolkit.
-          const conn = await ensureToolConnection(parsed.tool, 'default', { force: true })
-          if (!conn.connected && conn.redirectUrl) {
-            return { success: true, needsConnection: true, serviceLabel: conn.serviceLabel, redirectUrl: conn.redirectUrl }
-          }
-        } catch (_) {
-          // fall through to generic explanation
-        }
-      }
-
-      // Turn the raw API error into a user-friendly message via the LLM
-      try {
-        const errMsg = (await callLLM(
-          `The user asked: "${message}"\n\nThe tool "${parsed.tool}" failed with this error:\n${e.message}\n\nWrite a short, friendly explanation of what went wrong and what the user can try instead. Plain text, 1-3 sentences.`,
-          model,
-          { json: false }
-        )).trim()
-        return { success: true, direct: true, response: errMsg }
-      } catch (_) {
-        return { success: false, error: e.message }
-      }
+    let naturalAnswer
+    try {
+      naturalAnswer = (await callLLM(interpretPrompt, model, { json: false })).trim()
+    } catch (_) {
+      naturalAnswer = `\`\`\`json\n${allResults}\n\`\`\``
     }
+
+    return { success: true, direct: true, response: naturalAnswer }
   }
 
   // ── Direct answer ────────────────────────────────────────────────────────
