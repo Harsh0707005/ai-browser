@@ -62,7 +62,10 @@ wss.on('connection', (ws) => {
 
     try {
       if (msg.type === 'plan') {
-        const result = await handlePlan(msg.message, msg.conversationContext, msg.model || 'gemini', msg.clientDateTime)
+        const sendProgress = (status) => {
+          try { ws.send(JSON.stringify({ type: 'plan_progress', requestId, status })) } catch (_) {}
+        }
+        const result = await handlePlan(msg.message, msg.conversationContext, msg.model || 'gemini', msg.clientDateTime, sendProgress)
         ws.send(JSON.stringify({ type: 'plan_result', requestId, ...result }))
       }
 

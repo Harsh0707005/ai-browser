@@ -69,6 +69,12 @@ function connectWS() {
     let msg
     try { msg = JSON.parse(event.data) } catch (e) { return }
 
+    if (msg.type === 'plan_progress' && msg.status) {
+      const loadingDivs = chatMessages.querySelectorAll('.chat-message.loading')
+      if (loadingDivs.length) loadingDivs[loadingDivs.length - 1].textContent = msg.status
+      return
+    }
+
     if (msg.requestId && pendingRequests[msg.requestId]) {
       pendingRequests[msg.requestId].resolve(msg)
       delete pendingRequests[msg.requestId]

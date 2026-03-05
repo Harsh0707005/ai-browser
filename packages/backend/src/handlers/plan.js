@@ -8,7 +8,31 @@ import {
   ensureToolConnection,
 } from '../composio/index.js'
 
-export async function handlePlan(message, conversationContext, model = 'gemini', clientDateTime) {
+function toolProgressLabel(slug) {
+  const s = slug.toUpperCase()
+  if (s.includes('SEND_EMAIL')) return 'Sending email'
+  if (s.includes('FETCH_EMAIL') || s.includes('LIST_MESSAGES') || s.includes('LIST_THREADS')) return 'Fetching emails'
+  if (s.includes('CREATE_EMAIL_DRAFT')) return 'Creating email draft'
+  if (s.includes('LIST_FILES') || s.includes('FIND_FILE')) return 'Fetching Drive files'
+  if (s.includes('UPLOAD_FILE')) return 'Uploading file to Drive'
+  if (s.includes('CREATE_FILE') || s.includes('CREATE_FOLDER')) return 'Creating Drive file'
+  if (s.includes('DOWNLOAD_FILE')) return 'Downloading file'
+  if (s.includes('CREATE_EVENT') || s.includes('QUICK_ADD')) return 'Creating calendar event'
+  if (s.includes('EVENTS_LIST') || s.includes('FIND_EVENT') || s.includes('GET_CURRENT_DATE')) return 'Fetching calendar events'
+  if (s.includes('UPDATE_EVENT') || s.includes('PATCH_EVENT')) return 'Updating calendar event'
+  if (s.includes('DELETE_EVENT')) return 'Deleting calendar event'
+  if (s.includes('CREATE_MEET') || s.includes('CREATE_SPACE')) return 'Creating Meet link'
+  if (s.includes('GET_MEET') || s.includes('LIST_CONFERENCE')) return 'Fetching meeting info'
+  if (s.includes('CREATE_DOCUMENT') || s.includes('CREATE_DOCUMENT_MARKDOWN')) return 'Creating document'
+  if (s.includes('GET_DOCUMENT') || s.includes('SEARCH_DOCUMENTS')) return 'Fetching document'
+  if (s.includes('UPDATE_DOCUMENT') || s.includes('INSERT_TEXT') || s.includes('REPLACE_ALL_TEXT')) return 'Updating document'
+  if (s.includes('CREATE_GOOGLE_SHEET') || s.includes('SHEET_FROM_JSON')) return 'Creating spreadsheet'
+  if (s.includes('VALUES_GET') || s.includes('SEARCH_SPREADSHEETS')) return 'Reading spreadsheet'
+  if (s.includes('VALUES_UPDATE') || s.includes('VALUES_APPEND') || s.includes('UPSERT_ROWS')) return 'Updating spreadsheet'
+  return 'Running tool'
+}
+
+export async function handlePlan(message, conversationContext, model = 'gemini', clientDateTime, sendProgress = () => {}) {
   console.log(`[PLAN] "${message}" (model: ${model})` + (conversationContext ? ' (with context)' : ''))
 
   // ── Keyword pre-routing ──────────────────────────────────────────────────
@@ -137,6 +161,7 @@ Respond with ONLY valid JSON.`
     let current = parsed
 
     while (current?.type === 'tool_call' && current.tool && toolHistory.length < MAX_TOOL_CALLS) {
+      sendProgress(toolProgressLabel(current.tool) + '...')
       let toolResult
       try {
         const connTimeout = new Promise((_, reject) =>
