@@ -8,7 +8,7 @@ import {
   ensureToolConnection,
 } from '../composio/index.js'
 
-export async function handlePlan(message, conversationContext, model = 'gemini') {
+export async function handlePlan(message, conversationContext, model = 'gemini', clientDateTime) {
   console.log(`[PLAN] "${message}" (model: ${model})` + (conversationContext ? ' (with context)' : ''))
 
   // ── Keyword pre-routing ──────────────────────────────────────────────────
@@ -68,7 +68,10 @@ You may call at most ONE of these tools by returning a JSON object with type "to
     ? `PREVIOUS CONVERSATION CONTEXT:\n${conversationContext.trim()}\n\nCURRENT USER MESSAGE: `
     : 'USER REQUEST: '
 
+  const dateBlock = clientDateTime ? `CURRENT DATE/TIME: ${clientDateTime}\n` : ''
+
   const prompt = `You are an AI browser assistant. Decide: answer directly, call an external tool, or browse the web.
+${dateBlock}
 ${toolsBlock}
 ${contextBlock}"${message}"
 

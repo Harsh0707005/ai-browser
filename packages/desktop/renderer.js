@@ -84,6 +84,7 @@ function sendRequest(msg) {
     const requestId = ++requestCounter
     msg.requestId = requestId
     msg.model = getSelectedModel()
+    msg.clientDateTime = new Date().toLocaleString('en-US', { dateStyle: 'full', timeStyle: 'long' })
     pendingRequests[requestId] = { resolve, reject }
     ws.send(JSON.stringify(msg))
 

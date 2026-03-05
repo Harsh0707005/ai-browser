@@ -4,7 +4,7 @@ import { formatElements } from '../utils/formatElements.js'
 
 export async function handleStep(data) {
   const model = data.model || 'gemini'
-  const { goal, plan, stepIndex, pageContext, currentURL, actionsTakenThisStep } = data
+  const { goal, plan, stepIndex, pageContext, currentURL, actionsTakenThisStep, clientDateTime } = data
   const currentStep = plan.steps[stepIndex]
 
   if (!currentStep) return { success: true, action: 'done', thought: 'All steps completed' }
@@ -16,9 +16,10 @@ export async function handleStep(data) {
     ? `\nACTIONS ALREADY DONE FOR THIS STEP (do not repeat these):\n${actionsTakenThisStep.map(a => `- ${a.action}${a.url ? ' to ' + a.url : ''}${a.elementId != null ? ' element ' + a.elementId : ''}${a.text ? ' "' + a.text + '"' : ''}`).join('\n')}\nIf this step is now complete, return {"action":"done","thought":"reason"}.`
     : ''
 
-  const prompt = `You are an AI browser automation agent executing a plan.
+  const dateBlock = clientDateTime ? `CURRENT DATE/TIME: ${clientDateTime}\n\n` : ''
 
-GOAL: "${goal}"
+  const prompt = `You are an AI browser automation agent executing a plan.
+${dateBlock}GOAL: "${goal}"
 
 PLAN:
 ${plan.steps.map(s => `  ${s.step}. ${s.description}`).join('\n')}
