@@ -1,0 +1,47 @@
+name: Build desktop DMG
+
+on:
+  push:
+    branches:
+      - main
+      - master
+      - "*"
+  workflow_dispatch:
+
+jobs:
+  build-macos-dmg:
+    runs-on: macos-latest
+
+    env:
+      # Disable code signing / identity auto-discovery in CI
+      CSC_IDENTITY_AUTO_DISCOVERY: "false"
+      ELECTRON_BUILDER_ALLOW_UNRESOLVED_DEPENDENCIES: "true"
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "npm"
+
+      - name: Install dependencies
+        run: npm install
+
+      - name: Build desktop DMG
+        working-directory: .
+        run: npm run build -w desktop
+
+      - name: List dist output
+        run: ls -R packages/desktop/dist || echo "No dist directory"
+
+      - name: Upload DMG artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: desktop-dmg
+          path: |
+            packages/desktop/dist/**/*.dmg
+          if-no-files-found: warn
+
