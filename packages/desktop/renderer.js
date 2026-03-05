@@ -561,6 +561,138 @@ function addMessage(text, type, reference) {
   return div
 }
 
+const SERVICE_ICON_COLORS = {
+  'Gmail': '#EA4335',
+  'Google Calendar': '#4285F4',
+  'Google Docs': '#4285F4',
+  'Google Sheets': '#0F9D58',
+  'Google Drive': '#34A853',
+  'Google Meet': '#00897B',
+  'YouTube': '#FF0000',
+}
+
+function addConnectionCard(serviceLabel, redirectUrl, pendingMessage, pendingContext) {
+  const card = document.createElement('div')
+  card.className = 'chat-message connection-card'
+
+  // ── Header: icon + title ──────────────────────────────────────────────────
+  const header = document.createElement('div')
+  header.className = 'connection-card-header'
+
+  const iconEl = document.createElement('div')
+  iconEl.className = 'connection-card-icon'
+  iconEl.style.background = SERVICE_ICON_COLORS[serviceLabel] || '#1a73e8'
+  iconEl.textContent = serviceLabel.charAt(0)
+
+  const titleEl = document.createElement('div')
+  titleEl.className = 'connection-card-title'
+  titleEl.textContent = `Connect ${serviceLabel}`
+
+  header.appendChild(iconEl)
+  header.appendChild(titleEl)
+
+  // ── Description ───────────────────────────────────────────────────────────
+  const descEl = document.createElement('div')
+  descEl.className = 'connection-card-desc'
+  descEl.textContent = `Sign in to your ${serviceLabel} account to continue. Click Connect, complete the sign-in in your browser, then click Continue.`
+
+  // ── Buttons ───────────────────────────────────────────────────────────────
+  const actions = document.createElement('div')
+  actions.className = 'connection-card-actions'
+
+  const connectBtn = document.createElement('button')
+  connectBtn.className = 'connection-card-btn connect'
+  connectBtn.type = 'button'
+  connectBtn.textContent = `Connect ${serviceLabel}`
+  connectBtn.addEventListener('click', () => {
+    window.open(redirectUrl, '_blank')
+    statusEl.textContent = 'Complete the sign-in in your browser, then click Continue.'
+    statusEl.className = 'connection-card-status'
+  })
+
+  const continueBtn = document.createElement('button')
+  continueBtn.className = 'connection-card-btn continue'
+  continueBtn.type = 'button'
+  continueBtn.textContent = 'Continue'
+
+  continueBtn.addEventListener('click', async () => {
+    connectBtn.disabled = true
+    continueBtn.disabled = true
+    statusEl.textContent = 'Checking connection...'
+    statusEl.className = 'connection-card-status'
+    setInputEnabled(false)
+
+    let closeTabsOnFinish = false
+    try {
+      const planResult = await sendRequest({ type: 'plan', message: pendingMessage, conversationContext: pendingContext })
+
+      if (planResult.needsConnection) {
+        statusEl.textContent = 'Not connected yet — complete the sign-in and try again.'
+        statusEl.className = 'connection-card-status error'
+        connectBtn.disabled = false
+        continueBtn.disabled = false
+        setInputEnabled(true)
+        return
+      }
+
+      card.remove()
+
+      if (!planResult.success) {
+        addMessage(planResult.error || 'Failed to process request', 'error')
+        return
+      }
+
+      if (planResult.direct) {
+        const reply = planResult.response || ''
+        conversationHistory.push({ role: 'assistant', content: reply })
+        addMessage(reply, 'assistant')
+        return
+      }
+
+      if (planResult.plan) {
+        const planId = addPlanDisplay(planResult.plan)
+        const executionResult = await executeAgentPlan(planResult.plan, planId)
+        if (executionResult && typeof executionResult.closeTabs === 'boolean') {
+          closeTabsOnFinish = executionResult.closeTabs
+        }
+      }
+    } catch (e) {
+      statusEl.textContent = 'Error: ' + e.message
+      statusEl.className = 'connection-card-status error'
+      connectBtn.disabled = false
+      continueBtn.disabled = false
+    } finally {
+      agentAbortRequested = false
+      if (window.electronAPI) {
+        agentTabIds.forEach(id => {
+          window.electronAPI.stopAgentControl(id)
+          if (closeTabsOnFinish && ownedAgentTabIds.has(id)) window.electronAPI.closeTab(id)
+        })
+      }
+      agentTabIds.clear()
+      ownedAgentTabIds.clear()
+      updateAgentOverlay()
+      setInputEnabled(true)
+    }
+  })
+
+  // ── Status line ───────────────────────────────────────────────────────────
+  const statusEl = document.createElement('div')
+  statusEl.className = 'connection-card-status'
+  statusEl.textContent = 'Sign in to grant access, then click Continue.'
+
+  actions.appendChild(connectBtn)
+  actions.appendChild(continueBtn)
+
+  card.appendChild(header)
+  card.appendChild(descEl)
+  card.appendChild(actions)
+  card.appendChild(statusEl)
+
+  chatMessages.appendChild(card)
+  smoothScrollToBottom()
+}
+
 function smoothScrollToBottom() {
   requestAnimationFrame(() => {
     chatMessages.scrollTo({
@@ -788,6 +920,12 @@ async function sendChatMessage() {
     if (agentAbortRequested) return
     if (!planResult.success) {
       addMessage(planResult.error || 'Failed to process request', 'error')
+      setInputEnabled(true)
+      return
+    }
+
+    if (planResult.needsConnection) {
+      addConnectionCard(planResult.serviceLabel, planResult.redirectUrl, message, conversationContext)
       setInputEnabled(true)
       return
     }

@@ -657,6 +657,103 @@ body {
   font-size: 12px;
 }
 
+/* ── Connection card ──────────────────────────────────────────────────────── */
+.chat-message.connection-card {
+  align-self: flex-start;
+  background: #1e2535;
+  border: 1px solid #2e3f5c;
+  border-radius: 12px;
+  padding: 14px 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  max-width: 90%;
+}
+
+.connection-card-header {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.connection-card-icon {
+  width: 30px;
+  height: 30px;
+  border-radius: 8px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 14px;
+  font-weight: 700;
+  color: #fff;
+  flex-shrink: 0;
+}
+
+.connection-card-title {
+  font-size: 13.5px;
+  font-weight: 600;
+  color: #e0e0e0;
+}
+
+.connection-card-desc {
+  font-size: 12px;
+  color: #7a8fa8;
+  line-height: 1.5;
+}
+
+.connection-card-actions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.connection-card-btn {
+  border: none;
+  border-radius: 8px;
+  padding: 7px 14px;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: opacity 0.15s, transform 0.1s;
+}
+
+.connection-card-btn:hover:not(:disabled) {
+  opacity: 0.85;
+  transform: translateY(-1px);
+}
+
+.connection-card-btn:active:not(:disabled) {
+  transform: translateY(0);
+}
+
+.connection-card-btn:disabled {
+  opacity: 0.35;
+  cursor: not-allowed;
+}
+
+.connection-card-btn.connect {
+  background: #1a73e8;
+  color: #fff;
+}
+
+.connection-card-btn.continue {
+  background: #253045;
+  color: #8ca8cc;
+  border: 1px solid #2e4060;
+}
+
+.connection-card-status {
+  font-size: 11px;
+  color: #5a7090;
+  line-height: 1.4;
+}
+
+.connection-card-status.error {
+  color: #e57373;
+}
+
+/* ── End connection card ──────────────────────────────────────────────────── */
+
 .plan-container {
   background: #252526;
   border: 1px solid #333;

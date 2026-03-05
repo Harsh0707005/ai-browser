@@ -134,14 +134,8 @@ Respond with ONLY valid JSON.`
       const conn = await Promise.race([ensureToolConnection(parsed.tool, 'default'), connTimeout])
       if (!conn.connected) {
         if (conn.redirectUrl) {
-          const msg = [
-            `To access your **${conn.serviceLabel}**, you need to connect it first.`,
-            '',
-            `1. Click [Connect ${conn.serviceLabel}](${conn.redirectUrl}) and complete the sign-in.`,
-            '2. Once connected, ask your question again.',
-          ].join('\n')
           console.log(`[PLAN] Prompted user to connect ${conn.serviceLabel}`)
-          return { success: true, direct: true, response: msg }
+          return { success: true, needsConnection: true, serviceLabel: conn.serviceLabel, redirectUrl: conn.redirectUrl }
         }
         return { success: false, error: `${conn.serviceLabel ?? 'Service'} is not connected` }
       }
@@ -191,13 +185,7 @@ Write a clear, natural answer based only on this data.
           // connection is stale or not valid for this toolkit.
           const conn = await ensureToolConnection(parsed.tool, 'default', { force: true })
           if (!conn.connected && conn.redirectUrl) {
-            const friendly = [
-              `To use **${conn.serviceLabel || 'this service'}**, you need to connect your account first.`,
-              '',
-              `1. Click [Connect ${conn.serviceLabel || 'account'}](${conn.redirectUrl}) and complete the sign-in.`,
-              '2. Once connected, ask your question again (for example: "create an instant Google Meet").',
-            ].join('\n')
-            return { success: true, direct: true, response: friendly }
+            return { success: true, needsConnection: true, serviceLabel: conn.serviceLabel, redirectUrl: conn.redirectUrl }
           }
         } catch (_) {
           // fall through to generic explanation
