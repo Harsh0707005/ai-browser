@@ -6,6 +6,8 @@ import path from 'path'
 import { fileURLToPath } from 'url'
 
 import { initGemini, initOpenAI, initClaude } from './llm/index.js'
+import { initComposio } from './composio/index.js'
+import { discoverAllToolSlugs } from './composio/discovery.js'
 import { handlePlan } from './handlers/plan.js'
 import { handleStep } from './handlers/step.js'
 import { handleSummary } from './handlers/summary.js'
@@ -19,14 +21,17 @@ const GEMINI_API_KEY = process.env.GEMINI_API_KEY
 const OPENAI_API_KEY = process.env.OPENAI_API_KEY
 const CLAUDE_API_KEY = process.env.CLAUDE_API_KEY
 const CLAUDE_MODEL = process.env.CLAUDE_MODEL
+const COMPOSIO_API_KEY = process.env.COMPOSIO_API_KEY
 
 if (!GEMINI_API_KEY) console.error('GEMINI_API_KEY is not set in .env file')
 if (!OPENAI_API_KEY) console.error('OPENAI_API_KEY is not set in .env file')
 if (!CLAUDE_API_KEY) console.error('CLAUDE_API_KEY is not set in .env file')
+if (!COMPOSIO_API_KEY) console.error('COMPOSIO_API_KEY is not set in .env file')
 
 initGemini(GEMINI_API_KEY)
 initOpenAI(OPENAI_API_KEY)
 initClaude(CLAUDE_API_KEY, CLAUDE_MODEL)
+initComposio(COMPOSIO_API_KEY)
 
 // Server setup
 const app = express()
@@ -36,6 +41,14 @@ const PORT = process.env.PORT ?? 3001
 
 app.use(express.json())
 app.get('/health', (req, res) => res.send({ message: 'healthy' }))
+app.get('/composio/slugs', async (_req, res) => {
+  try {
+    const result = await discoverAllToolSlugs()
+    res.json(result)
+  } catch (e) {
+    res.status(500).json({ error: e.message })
+  }
+})
 
 // WebSocket router
 wss.on('connection', (ws) => {

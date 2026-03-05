@@ -1,85 +1,231 @@
 import { callLLM } from '../llm/index.js'
 import { parseJSON } from '../utils/parseJSON.js'
+import {
+  isComposioReady,
+  matchServices,
+  getToolsForServices,
+  executeComposioTool,
+  ensureToolConnection,
+} from '../composio/index.js'
 
 export async function handlePlan(message, conversationContext, model = 'gemini') {
   console.log(`[PLAN] "${message}" (model: ${model})` + (conversationContext ? ' (with context)' : ''))
 
+  // ── Keyword pre-routing ──────────────────────────────────────────────────
+  // Match services by keyword scan — avoids loading 100+ tools on every request.
+  // Only services whose keywords appear in the message are fetched.
+  let externalTools = []
+  if (isComposioReady()) {
+    const matched = matchServices(message)
+    if (matched.length) {
+      try {
+        const timeout = new Promise((_, reject) =>
+          setTimeout(() => reject(new Error('Tool fetch timed out after 8s')), 8000)
+        )
+        externalTools = await Promise.race([
+          getToolsForServices(matched.map(s => s.key)),
+          timeout,
+        ])
+        console.log(`[PLAN] ${externalTools.length} tools from: ${matched.map(s => s.label).join(', ')}`)
+      } catch (e) {
+        console.error('[PLAN] Tool fetch failed:', e.message)
+      }
+    }
+  }
+
+  // ── Build tools block for prompt ─────────────────────────────────────────
+  const serviceGroups = {}
+  for (const t of externalTools) {
+    if (!serviceGroups[t.serviceLabel]) serviceGroups[t.serviceLabel] = []
+    serviceGroups[t.serviceLabel].push({
+      slug: t.slug,
+      name: t.name,
+      description: t.description,
+      parameters: t.parameters,
+    })
+  }
+
+  const toolsBlock = externalTools.length
+    ? `AVAILABLE EXTERNAL TOOLS:
+${Object.entries(serviceGroups)
+  .map(([label, tools]) => `## ${label}\n${JSON.stringify(tools, null, 2)}`)
+  .join('\n\n')}
+
+You may call at most ONE of these tools by returning a JSON object with type "tool_call".
+
+`
+    : ''
+
+  const activeServiceLabels = Object.keys(serviceGroups)
+  const toolUseInstruction = activeServiceLabels.length
+    ? `MANDATORY: USE EXTERNAL TOOLS for any request involving ${activeServiceLabels.join(', ')}.
+- You MUST call the matching tool — do NOT browse the web for these services.
+- "create a sheet", "make a doc", "start a meeting" etc. → call the tool, never navigate to a URL.
+- Pick the single best matching tool slug from AVAILABLE EXTERNAL TOOLS.`
+    : ''
+
   const contextBlock = conversationContext && conversationContext.trim()
-    ? `PREVIOUS CONVERSATION CONTEXT (user may be answering a follow-up or continuing):\n${conversationContext.trim()}\n\nCURRENT USER MESSAGE: `
+    ? `PREVIOUS CONVERSATION CONTEXT:\n${conversationContext.trim()}\n\nCURRENT USER MESSAGE: `
     : 'USER REQUEST: '
 
-  const prompt = `You are an AI browser assistant. First decide: does this request NEED web browsing, or can you answer it directly?
+  const prompt = `You are an AI browser assistant. Decide: answer directly, call an external tool, or browse the web.
+${toolsBlock}
 ${contextBlock}"${message}"
 
-ANSWER DIRECTLY (no browsing) when:
-- Greetings, casual conversation, or chitchat
-- The user provides text and asks you to summarize, explain, rewrite, or analyze it
-- General knowledge questions you can confidently answer
-- Follow-ups about previous results that don't need new browsing
-- Anything that does NOT require visiting a website, searching the web, or interacting with a page
+ANSWER DIRECTLY when:
+- Greetings, casual conversation, chitchat
+- User provides text to summarize, explain, or analyze
+- General knowledge you can confidently answer
+- Follow-ups that don't need new browsing
 
-USE BROWSING when:
-- The user wants to visit, search, or look something up on the web
-- The request needs live/current information from websites
-- The user wants to interact with a specific site (click, fill forms, etc.)
-- Price comparisons, product searches, or anything requiring real web data
+${toolUseInstruction}
 
-If you can answer directly, respond with:
-{"type": "direct", "response": "your helpful answer here"}
-In the response you may use markdown. For tabular data use a fenced code block with language "table-json" containing a single JSON object with "columns" (array of header strings) and "rows" (array of arrays of cell values).
-Accuracy rule for direct answers: never fabricate any number, metric, price, date, name, quote, source, or detail. If you are not sure or do not have a value, clearly say it is unavailable/unknown or omit it.
+USE BROWSING only when no external tool covers the request:
+- User wants to visit, search, or look something up on a website
+- Request needs live information from a third-party site
+- Price comparisons, product searches, real web data
+- NEVER browse for services listed in AVAILABLE EXTERNAL TOOLS
 
-If browsing is needed, respond with:
+If answering directly:
+{"type": "direct", "response": "your answer"}
+You may use markdown. For tables use a fenced code block with language "table-json" containing {"columns":[...],"rows":[[...]]}.
+Accuracy rule: never fabricate numbers, prices, names, quotes, or details you don't know.
+
+If calling an external tool:
+{"type": "tool_call", "tool": "<exact slug>", "arguments": {<valid JSON matching that tool's parameters>}}
+Rules: tool must be an exact slug from AVAILABLE EXTERNAL TOOLS. Use minimal safe arguments. Don't guess IDs or emails.
+
+If browsing is needed:
 {
   "type": "plan",
-  "goal": "concise summary of end goal",
-  "execution": {
-    "startFromCurrentTab": true
-  },
+  "goal": "concise summary",
+  "execution": {"startFromCurrentTab": false},
   "steps": [
-    {"step": 1, "group": 1, "description": "Navigate to example.com and do X"},
-    {"step": 2, "group": 1, "description": "Navigate to other.com and do Y"},
-    {"step": 3, "group": 2, "description": "Compile results"}
+    {"step": 1, "group": 1, "description": "Navigate to X and do Y"}
   ]
 }
-
-Plan rules (only when type is "plan"):
-- Each step has a "group" number. Steps within the same group execute in PARALLEL (each in its own browser tab simultaneously). Steps in different groups execute SEQUENTIALLY (lower group finishes before the next group starts).
-- Use the same group for steps that are completely independent of each other. Use different groups when a step depends on a prior step's outcome.
-- If the entire task is a linear chain of dependent actions, every step should have a unique group number.
-- Each step = a self-contained browser task (may involve navigation + interactions on that page)
-- Parallel steps (same group) must each be fully self-contained — include their own navigation since they run in separate tabs
-- Break the goal into small, concrete subactions. Avoid large vague steps; prefer short step descriptions that each accomplish one clear objective
-- Ensure steps are not repetitive clones: each step should represent a distinct action/progression toward the goal
-- Be specific: say exactly what to click, what to type, where to go
-- Maximum 10 steps
-- If the user's message is a short follow-up (e.g. "yes", "the first one", "try that"), interpret it in light of the previous conversation context
-- Set execution.startFromCurrentTab=true when the request is clearly continuing from current page state, prior on-page operations, or recent assistant-led workflow context; otherwise set it to false
-- Do not invent facts in step descriptions. If a specific detail is unknown, keep the step generic and evidence-seeking rather than asserting made-up values
-- Do not assume site structure in advance (forms, submit flows, selectors, menus, layout). Different sites can be structured or unstructured
-- For interactions, plan to first inspect the visible page elements/context, then decide the exact interaction pattern based on what is actually present
-- Respond with ONLY valid JSON`
+Plan rules: same group = parallel execution; different group = sequential. Max 10 steps. Be specific about actions.
+Set startFromCurrentTab=true only when continuing from current page/prior workflow.
+Do not assume site structure — plan to inspect first, then act.
+Respond with ONLY valid JSON.`
 
   let text
   try {
-    text = await callLLM(prompt, model, { json: true })
+    const llmTimeout = new Promise((_, reject) =>
+      setTimeout(() => reject(new Error('LLM call timed out after 20s')), 20000)
+    )
+    text = await Promise.race([callLLM(prompt, model, { json: true }), llmTimeout])
   } catch (err) {
     return { success: false, error: err.message }
   }
 
   const parsed = parseJSON(text)
 
+  // ── External tool call ───────────────────────────────────────────────────
+  if (parsed?.type === 'tool_call' && parsed.tool) {
+    if (!isComposioReady()) {
+      return { success: false, error: 'Tool calling is not available right now' }
+    }
+
+    try {
+      const connTimeout = new Promise((_, reject) =>
+        setTimeout(() => reject(new Error('Connection check timed out after 10s')), 10000)
+      )
+      const conn = await Promise.race([ensureToolConnection(parsed.tool, 'default'), connTimeout])
+      if (!conn.connected) {
+        if (conn.redirectUrl) {
+          const msg = [
+            `To access your **${conn.serviceLabel}**, you need to connect it first.`,
+            '',
+            `1. Click [Connect ${conn.serviceLabel}](${conn.redirectUrl}) and complete the sign-in.`,
+            '2. Once connected, ask your question again.',
+          ].join('\n')
+          console.log(`[PLAN] Prompted user to connect ${conn.serviceLabel}`)
+          return { success: true, direct: true, response: msg }
+        }
+        return { success: false, error: `${conn.serviceLabel ?? 'Service'} is not connected` }
+      }
+
+      const execTimeout = new Promise((_, reject) =>
+        setTimeout(() => reject(new Error('Tool execution timed out after 15s')), 15000)
+      )
+      const toolResult = await Promise.race([
+        executeComposioTool(parsed.tool, parsed.arguments || {}, 'default'),
+        execTimeout,
+      ])
+      console.log('[PLAN] Tool result:', parsed.tool, '| keys:', toolResult ? Object.keys(toolResult).join(',') : 'null')
+
+      // Interpret raw result into natural language
+      const interpretPrompt = `The user asked: "${message}"
+
+You called the tool "${parsed.tool}" and got this result:
+${JSON.stringify(toolResult, null, 2)}
+
+Write a clear, natural answer based only on this data.
+- Summarize meaningfully (events: name/time/date; emails: subject/sender; docs: title; etc.)
+- Use markdown for readability.
+- If empty/no results, say so plainly.
+- Do NOT show raw JSON. Do NOT fabricate anything not in the result.`
+
+      let naturalAnswer
+      try {
+        naturalAnswer = (await callLLM(interpretPrompt, model, { json: false })).trim()
+      } catch (_) {
+        naturalAnswer = `\`\`\`json\n${JSON.stringify(toolResult, null, 2)}\n\`\`\``
+      }
+
+      return { success: true, direct: true, response: naturalAnswer }
+    } catch (e) {
+      console.error('[PLAN] Tool execution failed:', e.message)
+
+      // Special handling: if the error indicates the user has no connected account
+      // for this toolkit, try to initiate a fresh connection and surface a link.
+      const msgLower = String(e.message || '').toLowerCase()
+      if (
+        msgLower.includes('no connected account found') ||
+        msgLower.includes('connectedaccountnotfound') ||
+        msgLower.includes('no active connection exists for toolkit')
+      ) {
+        try {
+          // Force a fresh initiation in case the previously-detected ACTIVE
+          // connection is stale or not valid for this toolkit.
+          const conn = await ensureToolConnection(parsed.tool, 'default', { force: true })
+          if (!conn.connected && conn.redirectUrl) {
+            const friendly = [
+              `To use **${conn.serviceLabel || 'this service'}**, you need to connect your account first.`,
+              '',
+              `1. Click [Connect ${conn.serviceLabel || 'account'}](${conn.redirectUrl}) and complete the sign-in.`,
+              '2. Once connected, ask your question again (for example: "create an instant Google Meet").',
+            ].join('\n')
+            return { success: true, direct: true, response: friendly }
+          }
+        } catch (_) {
+          // fall through to generic explanation
+        }
+      }
+
+      // Turn the raw API error into a user-friendly message via the LLM
+      try {
+        const errMsg = (await callLLM(
+          `The user asked: "${message}"\n\nThe tool "${parsed.tool}" failed with this error:\n${e.message}\n\nWrite a short, friendly explanation of what went wrong and what the user can try instead. Plain text, 1-3 sentences.`,
+          model,
+          { json: false }
+        )).trim()
+        return { success: true, direct: true, response: errMsg }
+      } catch (_) {
+        return { success: false, error: e.message }
+      }
+    }
+  }
+
+  // ── Direct answer ────────────────────────────────────────────────────────
   if (parsed?.type === 'direct' && parsed.response) {
-    console.log(`[PLAN] Direct answer: ${parsed.response.substring(0, 80)}...`)
+    console.log(`[PLAN] Direct: ${parsed.response.substring(0, 80)}...`)
     return { success: true, direct: true, response: parsed.response }
   }
 
-  if (parsed?.steps) {
-    console.log(`[PLAN] ${parsed.steps.length} steps: ${parsed.goal}`)
-    return { success: true, plan: parsed }
-  }
-
-  if (parsed?.type === 'plan' && parsed.steps) {
+  // ── Browsing plan ────────────────────────────────────────────────────────
+  if (parsed?.steps || (parsed?.type === 'plan' && parsed.steps)) {
     console.log(`[PLAN] ${parsed.steps.length} steps: ${parsed.goal}`)
     return { success: true, plan: parsed }
   }
