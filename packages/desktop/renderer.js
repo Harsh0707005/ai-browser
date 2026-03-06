@@ -394,10 +394,15 @@ function openSidebarAndFocus() {
   chatInput.focus()
 }
 
+// Track actual modifier key state — fixes "stuck modifier" bug where the browser misses
+// the keyUp for Meta/Ctrl if the window loses focus while the key is held, causing
+// subsequent plain keypresses (e.g. 'w') to appear to have the modifier still active.
+let _modKeyDown = false
 let lastModKeyTime = 0
 document.addEventListener('keydown', (e) => {
   const isMod = e.key === 'Meta' || e.key === 'Control'
   if (isMod) {
+    _modKeyDown = true
     const now = Date.now()
     if (now - lastModKeyTime < 400) {
       e.preventDefault()
@@ -409,6 +414,10 @@ document.addEventListener('keydown', (e) => {
     lastModKeyTime = now
   }
 })
+document.addEventListener('keyup', (e) => {
+  if (e.key === 'Meta' || e.key === 'Control') _modKeyDown = false
+})
+window.addEventListener('blur', () => { _modKeyDown = false })
 
 if (window.electronAPI) {
   window.electronAPI.onOpenSidebar(() => openSidebarAndFocus())
@@ -1349,7 +1358,13 @@ if (window.electronAPI) {
 }
 
 // ── Keyboard shortcuts (Chrome/Safari-style, Mac Cmd + Windows Ctrl) ─────────
-const mod = (e) => e.metaKey || e.ctrlKey
+// Use tracked modifier state (not e.metaKey) so stuck-modifier can't fire shortcuts
+// Require BOTH our tracked state AND the event's OS-reported modifier flag.
+// _modKeyDown alone can get stuck true when the renderer misses a Meta keyup (Cmd released
+// while BrowserView had focus — window.blur doesn't fire for intra-window focus changes).
+// e.metaKey from the OS key event is always the physical state at the time of the keypress,
+// so if _modKeyDown is stuck, e.metaKey=false for plain 'w' will correctly return false.
+const mod = (e) => _modKeyDown && (e.metaKey === true || e.ctrlKey === true)
 
 function openFindBar() {
   if (!findBar || !findInput) return
@@ -1401,12 +1416,6 @@ document.addEventListener('keydown', (e) => {
   if (mod(e) && e.shiftKey && e.key === 'n') {
     e.preventDefault()
     window.electronAPI.createPrivateWindow()
-    return
-  }
-  // Close tab (Cmd/Ctrl+W)
-  if (mod(e) && e.key === 'w') {
-    e.preventDefault()
-    if (activeTabId) window.electronAPI.closeTab(activeTabId)
     return
   }
   // Reopen closed tab (Cmd/Ctrl+Shift+T)

@@ -380,7 +380,21 @@ function getViewForTab(tabId) { return allTabs.get(tabId)?.view || null }
 // Handle browser shortcuts when focus is in the page (BrowserView). Returns true if handled.
 function handlePageShortcut(input, state) {
   if (!state?.win) return false
-  const mod = !!(input.meta || input.control)
+  // Only act on keyDown — keyUp events can still carry meta:true (e.g. after Cmd+W closes a tab
+  // the 'w' keyUp fires on the newly-active tab with meta still set, which would close it too)
+  if (input.type !== 'keyDown') return false
+  // Require explicit modifier: use modifiers array when present, else boolean meta/ctrl (strict so plain keys don't trigger)
+  const modFromArray = Array.isArray(input.modifiers) && (
+    input.modifiers.includes('meta') || input.modifiers.includes('control') ||
+    input.modifiers.includes('ctrl') || input.modifiers.includes('command') || input.modifiers.includes('cmd')
+  )
+  const mod = !!(
+    modFromArray ||
+    input.metaKey === true ||
+    input.ctrlKey === true ||
+    input.meta === true ||
+    input.control === true
+  )
   const key = (input.key || '').toLowerCase()
   const view = getActiveView(state)
   const ids = [...state.tabIds]
@@ -395,10 +409,6 @@ function handlePageShortcut(input, state) {
   }
   if (mod && input.shift && key === 'n') {
     createWindow(true)
-    return true
-  }
-  if (mod && key === 'w' && state.activeTabId) {
-    closeTab(state.activeTabId, state)
     return true
   }
   if (mod && input.shift && key === 't') {
@@ -1305,21 +1315,7 @@ function getFocusedState() {
 }
 
 function buildAppMenu() {
-  return Menu.buildFromTemplate([
-    {
-      label: 'File',
-      submenu: [
-        {
-          label: 'Close Tab',
-          accelerator: 'CommandOrCtrl+W',
-          click: () => {
-            const state = getFocusedState()
-            if (state?.activeTabId) closeTab(state.activeTabId, state)
-          }
-        }
-      ]
-    }
-  ])
+  return Menu.buildFromTemplate([])
 }
 
 // ── App Lifecycle ────────────────────────────────────────────────────────────
