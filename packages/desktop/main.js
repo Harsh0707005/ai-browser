@@ -1,4 +1,4 @@
-const { app, BrowserWindow, BrowserView, ipcMain, globalShortcut, session } = require('electron/main')
+const { app, BrowserWindow, BrowserView, ipcMain, session, Menu } = require('electron/main')
 const path = require('path')
 const fs = require('fs')
 const crypto = require('crypto')
@@ -370,11 +370,116 @@ let nextTabId = 1
 
 const TOOLBAR_HEIGHT_NORMAL  = 128
 const TOOLBAR_HEIGHT_PRIVATE = 158  // +30px for the private window banner
+const FIND_BAR_HEIGHT = 48  // extra space when find bar is open so BrowserView doesn't overlap it
 
 function stateForWindow(win) { return win ? winStates.get(win.id) : null }
 function stateForEvent(event) { return stateForWindow(event.sender.getOwnerBrowserWindow()) }
 function getActiveView(state) { return state?.activeTabId ? allTabs.get(state.activeTabId)?.view : null }
 function getViewForTab(tabId) { return allTabs.get(tabId)?.view || null }
+
+// Handle browser shortcuts when focus is in the page (BrowserView). Returns true if handled.
+function handlePageShortcut(input, state) {
+  if (!state?.win) return false
+  const mod = !!(input.meta || input.control)
+  const key = (input.key || '').toLowerCase()
+  const view = getActiveView(state)
+  const ids = [...state.tabIds]
+
+  if (mod && key === 'n' && !input.shift) {
+    createWindow(false)
+    return true
+  }
+  if (mod && key === 't') {
+    createTab(undefined, { isPrivate: state.isPrivate }, state)
+    return true
+  }
+  if (mod && input.shift && key === 'n') {
+    createWindow(true)
+    return true
+  }
+  if (mod && key === 'w' && state.activeTabId) {
+    closeTab(state.activeTabId, state)
+    return true
+  }
+  if (mod && input.shift && key === 't') {
+    if (state.closedTabs?.length) {
+      const { url } = state.closedTabs.pop()
+      if (url) createTab(url, { isPrivate: state.isPrivate }, state)
+    }
+    return true
+  }
+  if (mod && key === 'tab' && ids.length > 0) {
+    const idx = ids.indexOf(state.activeTabId)
+    const nextIdx = input.shift
+      ? (idx <= 0 ? ids.length - 1 : idx - 1)
+      : (idx < 0 || idx >= ids.length - 1 ? 0 : idx + 1)
+    switchTab(ids[nextIdx], state)
+    return true
+  }
+  if (mod && !input.shift && key >= '1' && key <= '9' && ids.length > 0) {
+    const n = parseInt(key, 10)
+    const targetIdx = n === 9 ? ids.length - 1 : Math.min(n - 1, ids.length - 1)
+    if (targetIdx >= 0) switchTab(ids[targetIdx], state)
+    return true
+  }
+  if ((mod && key === 'r') || key === 'f5') {
+    if (view) view.webContents.reload()
+    return true
+  }
+  if (mod && key === '.') {
+    if (view) view.webContents.stopLoad()
+    return true
+  }
+  if ((mod && key === 'l') || (input.alt && key === 'd')) {
+    state.win.webContents.focus()
+    state.win.webContents.send('shortcut-focus-address-bar')
+    return true
+  }
+  if (mod && (key === '=' || key === '+')) {
+    if (view) {
+      const z = Math.min(view.webContents.getZoomFactor() + 0.25, 5)
+      view.webContents.setZoomFactor(z)
+    }
+    return true
+  }
+  if (mod && key === '-') {
+    if (view) {
+      const z = Math.max(view.webContents.getZoomFactor() - 0.25, 0.25)
+      view.webContents.setZoomFactor(z)
+    }
+    return true
+  }
+  if (mod && key === '0') {
+    if (view) view.webContents.setZoomFactor(1)
+    return true
+  }
+  if ((mod && input.shift && key === 'i') || key === 'f12') {
+    if (view) view.webContents.toggleDevTools()
+    return true
+  }
+  if (mod && key === 'f' && !input.shift) {
+    state.win.webContents.focus()
+    state.win.webContents.send('shortcut-open-find')
+    return true
+  }
+  if (key === 'home' || (mod && key === 'arrowup')) {
+    if (view) view.webContents.executeJavaScript('window.scrollTo(0,0)').catch(() => {})
+    return true
+  }
+  if (key === 'end' || (mod && key === 'arrowdown')) {
+    if (view) view.webContents.executeJavaScript('window.scrollTo(0,document.documentElement.scrollHeight)').catch(() => {})
+    return true
+  }
+  if (input.alt && key === 'arrowleft') {
+    if (view && view.webContents.canGoBack()) view.webContents.goBack()
+    return true
+  }
+  if (input.alt && key === 'arrowright') {
+    if (view && view.webContents.canGoForward()) view.webContents.goForward()
+    return true
+  }
+  return false
+}
 
 // ── Login Form Detection ─────────────────────────────────────────────────────
 const DETECT_LOGIN_FORM_SCRIPT = `
@@ -448,7 +553,8 @@ function updateBrowserViewBounds(state) {
   const reserved = state.sidebarOpen ? state.sidebarWidth : 0
   const tab = allTabs.get(state.activeTabId)
   const borderWidth = tab?.isAgent ? 6 : 0
-  const toolbarH = state.isPrivate ? TOOLBAR_HEIGHT_PRIVATE : TOOLBAR_HEIGHT_NORMAL
+  const findBarH = state.findBarOpen ? FIND_BAR_HEIGHT : 0
+  const toolbarH = (state.isPrivate ? TOOLBAR_HEIGHT_PRIVATE : TOOLBAR_HEIGHT_NORMAL) + findBarH
 
   view.setBounds({
     x: borderWidth,
@@ -476,6 +582,12 @@ function wireViewEvents(tabId, view, state) {
       createTab(u, { isPrivate: state.isPrivate }, state)
     }
     return { action: 'deny' }
+  })
+
+  // Shortcuts work when the webpage has focus (only for the active tab)
+  view.webContents.on('before-input-event', (event, input) => {
+    if (state.activeTabId !== tabId) return
+    if (handlePageShortcut(input, state)) event.preventDefault()
   })
 
   view.webContents.on('did-start-loading', () => {
@@ -775,11 +887,17 @@ function switchTab(tabId, state) {
   })
 }
 
+const MAX_CLOSED_TABS = 15
+
 function closeTab(tabId, state) {
   if (!state.tabIds.has(tabId)) return
 
   const tab = allTabs.get(tabId)
   if (tab) {
+    if (state.closedTabs && tab.url && !tab.isAgent) {
+      state.closedTabs.push({ url: tab.url, title: tab.title })
+      if (state.closedTabs.length > MAX_CLOSED_TABS) state.closedTabs.shift()
+    }
     if (state.activeTabId === tabId) state.win.removeBrowserView(tab.view)
     try { tab.view.webContents.close() } catch (_) {}
     allTabs.delete(tabId)
@@ -829,7 +947,9 @@ function createWindow(isPrivate = false) {
     activeTabId: null,
     sidebarOpen: false,
     sidebarWidth: 0,
-    pendingCredVerifyTabId: null
+    findBarOpen: false,
+    pendingCredVerifyTabId: null,
+    closedTabs: [] // last 15 closed tabs for reopen (url, title)
   }
   winStates.set(win.id, state)
 
@@ -884,6 +1004,63 @@ ipcMain.on('close-tab', (event, tabId) => {
 ipcMain.on('switch-tab', (event, tabId) => {
   const state = stateForEvent(event)
   if (state) switchTab(tabId, state)
+})
+
+ipcMain.on('create-window', () => {
+  createWindow(false)
+})
+
+ipcMain.on('reopen-closed-tab', (event) => {
+  const state = stateForEvent(event)
+  if (!state?.closedTabs?.length) return
+  const { url } = state.closedTabs.pop()
+  if (url) createTab(url, { isPrivate: state.isPrivate }, state)
+})
+
+ipcMain.on('scroll-page', (event, where) => {
+  const state = stateForEvent(event)
+  const view = getActiveView(state)
+  if (!view) return
+  const script = where === 'bottom'
+    ? 'window.scrollTo(0, document.documentElement.scrollHeight - document.documentElement.clientHeight)'
+    : 'window.scrollTo(0, 0)'
+  view.webContents.executeJavaScript(script).catch(() => {})
+})
+
+ipcMain.on('stop-loading', (event) => {
+  const view = getActiveView(stateForEvent(event))
+  if (view) view.webContents.stopLoad()
+})
+
+const ZOOM_STEP = 0.25
+const ZOOM_MIN = 0.25
+const ZOOM_MAX = 5
+
+ipcMain.on('zoom', (event, direction) => {
+  const state = stateForEvent(event)
+  const view = getActiveView(state)
+  if (!view) return
+  const zoom = view.webContents.getZoomFactor()
+  if (direction === 'in') view.webContents.setZoomFactor(Math.min(zoom + ZOOM_STEP, ZOOM_MAX))
+  else if (direction === 'out') view.webContents.setZoomFactor(Math.max(zoom - ZOOM_STEP, ZOOM_MIN))
+  else if (direction === 'reset') view.webContents.setZoomFactor(1)
+})
+
+ipcMain.on('toggle-devtools', (event) => {
+  const state = stateForEvent(event)
+  const view = getActiveView(state)
+  if (view) view.webContents.toggleDevTools()
+})
+
+ipcMain.on('find-in-page', (event, text, findNext) => {
+  const state = stateForEvent(event)
+  const view = getActiveView(state)
+  if (!view) return
+  if (!text) {
+    view.webContents.stopFindInPage('clearSelection')
+    return
+  }
+  view.webContents.findInPage(text, { forward: true, findNext: !!findNext })
 })
 
 ipcMain.handle('create-agent-tab', (event, url, background) => {
@@ -956,6 +1133,16 @@ ipcMain.on('sidebar-toggled', (event, isOpen) => {
 ipcMain.on('sidebar-width-changed', (event, width) => {
   const state = stateForEvent(event)
   if (state) { state.sidebarWidth = width; updateBrowserViewBounds(state) }
+})
+
+ipcMain.on('find-bar-open', (event) => {
+  const state = stateForEvent(event)
+  if (state) { state.findBarOpen = true; updateBrowserViewBounds(state) }
+})
+
+ipcMain.on('find-bar-closed', (event) => {
+  const state = stateForEvent(event)
+  if (state) { state.findBarOpen = false; updateBrowserViewBounds(state) }
 })
 
 ipcMain.on('hide-browser-view', (event) => {
@@ -1111,27 +1298,43 @@ ipcMain.handle('wait-for-load', (event, tabId) => {
   })
 })
 
+// ── Application menu: Cmd+W = Close Tab (not Close Window) when browser is focused ─
+function getFocusedState() {
+  const win = BrowserWindow.getFocusedWindow()
+  return win ? winStates.get(win.id) : null
+}
+
+function buildAppMenu() {
+  return Menu.buildFromTemplate([
+    {
+      label: 'File',
+      submenu: [
+        {
+          label: 'Close Tab',
+          accelerator: 'CommandOrCtrl+W',
+          click: () => {
+            const state = getFocusedState()
+            if (state?.activeTabId) closeTab(state.activeTabId, state)
+          }
+        }
+      ]
+    }
+  ])
+}
+
 // ── App Lifecycle ────────────────────────────────────────────────────────────
 app.whenReady().then(() => {
   createWindow(false)
+  Menu.setApplicationMenu(buildAppMenu())
 
-  globalShortcut.register('Command+Shift+B', () => {
-    const win = BrowserWindow.getFocusedWindow() || BrowserWindow.getAllWindows()[0]
-    if (win) { win.show(); win.focus(); win.webContents.send('open-sidebar') }
-  })
-
-  globalShortcut.register('Command+Shift+N', () => {
-    createWindow(true)
-  })
+  // No global shortcuts: shortcuts only work when the browser window is focused
+  // (handled in renderer when UI is focused, and in BrowserView before-input-event when page is focused)
 
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow(false)
   })
 })
 
-app.on('will-quit', () => {
-  globalShortcut.unregisterAll()
-})
 
 app.on('window-all-closed', () => {
   if (process.platform !== 'darwin') app.quit()

@@ -1,4 +1,7 @@
 const addressInput = document.getElementById('addressInput')
+const findBar = document.getElementById('findBar')
+const findInput = document.getElementById('findInput')
+const findCloseBtn = document.getElementById('findCloseBtn')
 const backBtn = document.getElementById('backBtn')
 const forwardBtn = document.getElementById('forwardBtn')
 const reloadBtn = document.getElementById('reloadBtn')
@@ -408,6 +411,15 @@ document.addEventListener('keydown', (e) => {
 
 if (window.electronAPI) {
   window.electronAPI.onOpenSidebar(() => openSidebarAndFocus())
+  window.electronAPI.onShortcutFocusAddressBar(() => {
+    if (addressInput) {
+      addressInput.focus()
+      addressInput.select()
+    }
+  })
+  window.electronAPI.onShortcutOpenFind(() => {
+    openFindBar()
+  })
 }
 
 function formatTurns(turns) {
@@ -1334,24 +1346,196 @@ if (window.electronAPI) {
   })
 }
 
+// ── Keyboard shortcuts (Chrome/Safari-style, Mac Cmd + Windows Ctrl) ─────────
+const mod = (e) => e.metaKey || e.ctrlKey
+
+function openFindBar() {
+  if (!findBar || !findInput) return
+  findBar.removeAttribute('hidden')
+  findInput.value = ''
+  findInput.focus()
+  if (window.electronAPI) {
+    window.electronAPI.findInPage('')
+    window.electronAPI.findBarOpen()
+  }
+}
+
+function closeFindBar() {
+  if (!findBar || !findInput) return
+  findBar.setAttribute('hidden', '')
+  if (window.electronAPI) {
+    window.electronAPI.findInPage('')
+    window.electronAPI.findBarClosed()
+  }
+  findInput.value = ''
+}
+
 document.addEventListener('keydown', (e) => {
   if (e.key === 'Escape' && settingsOverlay && settingsOverlay.getAttribute('aria-hidden') === 'false') {
     closeSettings()
     return
   }
-  if ((e.metaKey || e.ctrlKey) && e.key === 't') {
+  if (e.key === 'Escape' && findBar && !findBar.hasAttribute('hidden')) {
+    closeFindBar()
     e.preventDefault()
-    if (window.electronAPI) window.electronAPI.createTab()
+    return
   }
-  if ((e.metaKey || e.ctrlKey) && e.shiftKey && e.key === 'n') {
+
+  if (!window.electronAPI) return
+
+  // New window (Cmd/Ctrl+N)
+  if (mod(e) && !e.shiftKey && e.key === 'n') {
     e.preventDefault()
-    if (window.electronAPI) window.electronAPI.createPrivateWindow()
+    window.electronAPI.createWindow()
+    return
   }
-  if ((e.metaKey || e.ctrlKey) && e.key === 'w') {
+  // New tab (Cmd/Ctrl+T)
+  if (mod(e) && !e.shiftKey && e.key === 't') {
     e.preventDefault()
-    if (activeTabId && window.electronAPI) window.electronAPI.closeTab(activeTabId)
+    window.electronAPI.createTab()
+    return
+  }
+  // New private window (Cmd/Ctrl+Shift+N)
+  if (mod(e) && e.shiftKey && e.key === 'n') {
+    e.preventDefault()
+    window.electronAPI.createPrivateWindow()
+    return
+  }
+  // Close tab (Cmd/Ctrl+W)
+  if (mod(e) && e.key === 'w') {
+    e.preventDefault()
+    if (activeTabId) window.electronAPI.closeTab(activeTabId)
+    return
+  }
+  // Reopen closed tab (Cmd/Ctrl+Shift+T)
+  if (mod(e) && e.shiftKey && e.key === 't') {
+    e.preventDefault()
+    window.electronAPI.reopenClosedTab()
+    return
+  }
+
+  // Tab navigation: next (Cmd/Ctrl+Tab), previous (Cmd/Ctrl+Shift+Tab)
+  if (mod(e) && e.key === 'Tab' && tabsState.length > 0) {
+    e.preventDefault()
+    const idx = tabsState.findIndex((t) => t.id === activeTabId)
+    const nextIdx = e.shiftKey
+      ? (idx <= 0 ? tabsState.length - 1 : idx - 1)
+      : (idx < 0 || idx >= tabsState.length - 1 ? 0 : idx + 1)
+    window.electronAPI.switchTab(tabsState[nextIdx].id)
+    return
+  }
+
+  // Switch to tab 1–8 (Cmd/Ctrl+1..8), 9 = last tab (Cmd/Ctrl+9)
+  if (mod(e) && !e.shiftKey && e.key >= '1' && e.key <= '9' && tabsState.length > 0) {
+    e.preventDefault()
+    const n = parseInt(e.key, 10)
+    const targetIdx = n === 9 ? tabsState.length - 1 : Math.min(n - 1, tabsState.length - 1)
+    if (targetIdx >= 0) window.electronAPI.switchTab(tabsState[targetIdx].id)
+    return
+  }
+
+  // Reload (Cmd/Ctrl+R, F5)
+  if ((mod(e) && e.key === 'r') || e.key === 'F5') {
+    e.preventDefault()
+    window.electronAPI.reload()
+    return
+  }
+  // Stop loading (Cmd/Ctrl+.)
+  if (mod(e) && e.key === '.') {
+    e.preventDefault()
+    window.electronAPI.stopLoading()
+    return
+  }
+
+  // Focus address bar (Cmd/Ctrl+L, Alt+D)
+  if ((mod(e) && e.key === 'l') || (e.altKey && e.key === 'd')) {
+    e.preventDefault()
+    if (addressInput) {
+      addressInput.focus()
+      addressInput.select()
+    }
+    return
+  }
+
+  // Zoom in (Cmd/Ctrl+= or Cmd/Ctrl++)
+  if (mod(e) && (e.key === '=' || e.key === '+')) {
+    e.preventDefault()
+    window.electronAPI.zoomIn()
+    return
+  }
+  // Zoom out (Cmd/Ctrl+-)
+  if (mod(e) && e.key === '-') {
+    e.preventDefault()
+    window.electronAPI.zoomOut()
+    return
+  }
+  // Zoom reset (Cmd/Ctrl+0)
+  if (mod(e) && e.key === '0') {
+    e.preventDefault()
+    window.electronAPI.zoomReset()
+    return
+  }
+
+  // Find in page (Cmd/Ctrl+F)
+  if (mod(e) && e.key === 'f' && !e.shiftKey) {
+    e.preventDefault()
+    openFindBar()
+    return
+  }
+
+  // DevTools (Cmd/Ctrl+Shift+I, F12)
+  if ((mod(e) && e.shiftKey && e.key === 'I') || e.key === 'F12') {
+    e.preventDefault()
+    window.electronAPI.toggleDevTools()
+    return
+  }
+
+  // Scroll to top (Home, Cmd+Up on Mac) / bottom (End, Cmd+Down) — skip when typing in input
+  const inInput = e.target && (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA' || e.target.isContentEditable)
+  if (!inInput) {
+    if (e.key === 'Home' || (mod(e) && e.key === 'ArrowUp')) {
+      e.preventDefault()
+      window.electronAPI.scrollPageToTop()
+      return
+    }
+    if (e.key === 'End' || (mod(e) && e.key === 'ArrowDown')) {
+      e.preventDefault()
+      window.electronAPI.scrollPageToBottom()
+      return
+    }
+  }
+
+  // Back (Alt+Left), Forward (Alt+Right)
+  if (e.altKey && e.key === 'ArrowLeft') {
+    e.preventDefault()
+    if (backBtn && !backBtn.disabled) window.electronAPI.goBack()
+    return
+  }
+  if (e.altKey && e.key === 'ArrowRight') {
+    e.preventDefault()
+    if (forwardBtn && !forwardBtn.disabled) window.electronAPI.goForward()
+    return
   }
 })
+
+// Find bar
+if (findInput && window.electronAPI) {
+  let findDebounce = null
+  findInput.addEventListener('input', () => {
+    clearTimeout(findDebounce)
+    const text = findInput.value
+    findDebounce = setTimeout(() => window.electronAPI.findInPage(text), 150)
+  })
+  findInput.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') {
+      e.preventDefault()
+      window.electronAPI.findInPage(findInput.value, true)
+    }
+  })
+}
+if (findCloseBtn && findBar) {
+  findCloseBtn.addEventListener('click', closeFindBar)
+}
 
 addressInput.value = currentUrl
 if (window.electronAPI) setTimeout(() => { window.electronAPI.getNavigationState() }, 500)

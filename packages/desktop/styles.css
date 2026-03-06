@@ -345,11 +345,17 @@ body {
 }
 
 .toolbar {
-  height: 60px;
   background: #1e1e1e;
   border-bottom: 1px solid #333;
   display: flex;
+  flex-direction: column;
+}
+
+.toolbar-row {
+  height: 60px;
+  display: flex;
   align-items: center;
+  flex-shrink: 0;
   padding: 0 12px;
   gap: 12px;
   box-shadow: 0 1px 3px rgba(0, 0, 0, 0.2);
@@ -461,6 +467,53 @@ body {
 
 @keyframes spin {
   to { transform: rotate(360deg); }
+}
+
+.find-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 16px 10px;
+  background: #252526;
+  border-top: 1px solid #333;
+}
+
+.find-bar[hidden] {
+  display: none;
+}
+
+.find-input {
+  flex: 1;
+  max-width: 320px;
+  height: 32px;
+  padding: 0 12px;
+  border: 1px solid #383838;
+  border-radius: 6px;
+  background: #1e1e1e;
+  color: #e0e0e0;
+  font-size: 13px;
+  outline: none;
+}
+
+.find-input:focus {
+  border-color: #4a90e2;
+}
+
+.find-close-btn {
+  width: 28px;
+  height: 28px;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: #888;
+  font-size: 18px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.find-close-btn:hover {
+  background: #333;
+  color: #e0e0e0;
 }
 
 /* Sidebar - Dark Mode Aesthetic */

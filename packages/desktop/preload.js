@@ -14,8 +14,20 @@ contextBridge.exposeInMainWorld('electronAPI', {
 
   createTab: (url) => ipcRenderer.send('create-tab', url),
   createPrivateWindow: () => ipcRenderer.send('create-private-window'),
+  createWindow: () => ipcRenderer.send('create-window'),
   closeTab: (tabId) => ipcRenderer.send('close-tab', tabId),
   switchTab: (tabId) => ipcRenderer.send('switch-tab', tabId),
+  reopenClosedTab: () => ipcRenderer.send('reopen-closed-tab'),
+  scrollPageToTop: () => ipcRenderer.send('scroll-page', 'top'),
+  scrollPageToBottom: () => ipcRenderer.send('scroll-page', 'bottom'),
+  stopLoading: () => ipcRenderer.send('stop-loading'),
+  zoomIn: () => ipcRenderer.send('zoom', 'in'),
+  zoomOut: () => ipcRenderer.send('zoom', 'out'),
+  zoomReset: () => ipcRenderer.send('zoom', 'reset'),
+  toggleDevTools: () => ipcRenderer.send('toggle-devtools'),
+  findInPage: (text, findNext) => ipcRenderer.send('find-in-page', text, findNext),
+  findBarOpen: () => ipcRenderer.send('find-bar-open'),
+  findBarClosed: () => ipcRenderer.send('find-bar-closed'),
 
   createAgentTab: (url, background) => ipcRenderer.invoke('create-agent-tab', url, background),
   startAgentControl: (tabId) => ipcRenderer.send('start-agent-control', tabId),
@@ -46,5 +58,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
 
   onCredModalOpen: (cb) => ipcRenderer.on('cred-modal-open', cb),
   onCredModalClosed: (cb) => ipcRenderer.on('cred-modal-closed', cb),
-  onPrivateWindowMode: (cb) => ipcRenderer.on('private-window-mode', cb)
+  onPrivateWindowMode: (cb) => ipcRenderer.on('private-window-mode', cb),
+
+  onShortcutFocusAddressBar: (cb) => ipcRenderer.on('shortcut-focus-address-bar', cb),
+  onShortcutOpenFind: (cb) => ipcRenderer.on('shortcut-open-find', cb)
 })
