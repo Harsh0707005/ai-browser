@@ -31,6 +31,7 @@ let currentUrl = 'https://www.google.com'
 let tabsState = []
 let activeTabId = null
 let sidebarOpen = false
+let isPrivateWindow = false
 let agentRunning = false
 let agentAbortRequested = false
 const MAX_ACTIONS_PER_STEP = 5
@@ -1290,6 +1291,41 @@ newTabBtn.addEventListener('click', () => {
   if (window.electronAPI) window.electronAPI.createTab()
 })
 
+// ── New-tab button right-click → context menu ──────────────────────────────
+const newTabMenu = document.getElementById('newTabMenu')
+const newTabMenuItem = document.getElementById('newTabMenuItem')
+const newPrivateTabMenuItem = document.getElementById('newPrivateTabMenuItem')
+
+function closeNewTabMenu() {
+  if (newTabMenu) newTabMenu.setAttribute('aria-hidden', 'true')
+}
+
+if (newTabMenu && newTabBtn) {
+  newTabBtn.addEventListener('contextmenu', (e) => {
+    e.preventDefault()
+    e.stopPropagation()
+    newTabMenu.setAttribute('aria-hidden', 'false')
+  })
+  document.addEventListener('click', (e) => {
+    if (!newTabMenu.contains(e.target) && e.target !== newTabBtn) closeNewTabMenu()
+  })
+  document.addEventListener('keydown', (e) => { if (e.key === 'Escape') closeNewTabMenu() })
+}
+
+if (newTabMenuItem) {
+  newTabMenuItem.addEventListener('click', () => {
+    closeNewTabMenu()
+    if (window.electronAPI) window.electronAPI.createTab()
+  })
+}
+
+if (newPrivateTabMenuItem) {
+  newPrivateTabMenuItem.addEventListener('click', () => {
+    closeNewTabMenu()
+    if (window.electronAPI) window.electronAPI.createPrivateWindow()
+  })
+}
+
 if (window.electronAPI) {
   window.electronAPI.onTabsUpdated((data) => {
     tabsState = data.tabs
@@ -1306,6 +1342,10 @@ document.addEventListener('keydown', (e) => {
   if ((e.metaKey || e.ctrlKey) && e.key === 't') {
     e.preventDefault()
     if (window.electronAPI) window.electronAPI.createTab()
+  }
+  if ((e.metaKey || e.ctrlKey) && e.shiftKey && e.key === 'n') {
+    e.preventDefault()
+    if (window.electronAPI) window.electronAPI.createPrivateWindow()
   }
   if ((e.metaKey || e.ctrlKey) && e.key === 'w') {
     e.preventDefault()
@@ -1333,5 +1373,25 @@ if (window.electronAPI) {
     _credModalOpen = false
     _credModalResolvers.forEach(r => r())
     _credModalResolvers = []
+  })
+
+  window.electronAPI.onPrivateWindowMode(() => {
+    isPrivateWindow = true
+    document.body.classList.add('private-window')
+    // Always show private badge and tint the address bar
+    const privateBadge = document.getElementById('privateBadge')
+    const addressBar = document.getElementById('addressBar')
+    if (privateBadge) privateBadge.style.display = 'flex'
+    if (addressBar) addressBar.classList.add('private-mode')
+    // Show the private window banner
+    const banner = document.getElementById('privateWindowBanner')
+    if (banner) banner.removeAttribute('hidden')
+    // In private window, context menu says "New Private Window" (already wired)
+    // Update the new-tab menu item label for context
+    const menuItem = document.getElementById('newPrivateTabMenuItem')
+    if (menuItem) {
+      const textNode = menuItem.lastChild
+      if (textNode && textNode.nodeType === 3) textNode.nodeValue = ' New Private Window'
+    }
   })
 }

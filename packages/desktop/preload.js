@@ -13,6 +13,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   getNavigationState: () => ipcRenderer.send('get-navigation-state'),
 
   createTab: (url) => ipcRenderer.send('create-tab', url),
+  createPrivateWindow: () => ipcRenderer.send('create-private-window'),
   closeTab: (tabId) => ipcRenderer.send('close-tab', tabId),
   switchTab: (tabId) => ipcRenderer.send('switch-tab', tabId),
 
@@ -44,5 +45,6 @@ contextBridge.exposeInMainWorld('electronAPI', {
   showBrowserView: () => ipcRenderer.send('show-browser-view'),
 
   onCredModalOpen: (cb) => ipcRenderer.on('cred-modal-open', cb),
-  onCredModalClosed: (cb) => ipcRenderer.on('cred-modal-closed', cb)
+  onCredModalClosed: (cb) => ipcRenderer.on('cred-modal-closed', cb),
+  onPrivateWindowMode: (cb) => ipcRenderer.on('private-window-mode', cb)
 })

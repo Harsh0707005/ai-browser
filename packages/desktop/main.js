@@ -1,9 +1,9 @@
-const { app, BrowserWindow, BrowserView, ipcMain, globalShortcut } = require('electron/main')
+const { app, BrowserWindow, BrowserView, ipcMain, globalShortcut, session } = require('electron/main')
 const path = require('path')
 const fs = require('fs')
 const crypto = require('crypto')
 
-// ── Credential Storage ──────────────────────────────────────────────────────
+// ── Credential Storage ───────────────────────────────────────────────────────
 function credentialsPath() {
   return path.join(app.getPath('userData'), 'credentials.json')
 }
@@ -45,8 +45,8 @@ ipcMain.handle('delete-domain-credential', (_event, domain, credentialId) => {
   return true
 })
 
-async function injectCredentialModal(view, loginForm, savedCreds, options = {}) {
-  if (mainWindow) mainWindow.webContents.send('cred-modal-open')
+async function injectCredentialModal(view, loginForm, savedCreds, win, options = {}) {
+  if (win) win.webContents.send('cred-modal-open')
 
   const domain    = JSON.stringify(loginForm.domain)
   const saved     = JSON.stringify(savedCreds)
@@ -65,7 +65,6 @@ async function injectCredentialModal(view, loginForm, savedCreds, options = {}) 
   var SEL_ID     = SAVED.length ? SAVED[0].id : null;
   var IS_RETRY   = ${isRetry};
 
-  // ── shared helpers ────────────────────────────────────────────────────────
   function dismiss(signal) {
     var o = document.getElementById('__ai_cred_overlay__');
     if (o) o.remove();
@@ -134,7 +133,6 @@ async function injectCredentialModal(view, loginForm, savedCreds, options = {}) 
     setTimeout(function() { if (pill.parentNode) pill.remove(); }, 7000);
   }
 
-  // ── shell ─────────────────────────────────────────────────────────────────
   var overlay = mk('div', {
     position: 'fixed', inset: '0', zIndex: '2147483647',
     background: 'rgba(0,0,0,0.6)', backdropFilter: 'blur(4px)',
@@ -150,7 +148,6 @@ async function injectCredentialModal(view, loginForm, savedCreds, options = {}) 
     boxShadow: '0 24px 60px rgba(0,0,0,0.8)', overflow: 'hidden', color: '#e0e0e0'
   });
 
-  // header
   var header = mk('div', {
     display: 'flex', alignItems: 'center', gap: '10px',
     padding: '18px 20px 14px', borderBottom: '1px solid rgba(255,255,255,0.05)'
@@ -174,7 +171,6 @@ async function injectCredentialModal(view, loginForm, savedCreds, options = {}) 
 
   var body = mk('div', { padding: '16px 20px 20px' });
 
-  // ── list view ─────────────────────────────────────────────────────────────
   function renderListView() {
     titleEl.textContent = IS_RETRY ? 'Login may have failed' : (SAVED.length > 1 ? 'Saved Logins' : 'Saved Login');
     body.innerHTML = '';
@@ -249,7 +245,6 @@ async function injectCredentialModal(view, loginForm, savedCreds, options = {}) 
     body.appendChild(actions);
   }
 
-  // ── form view ─────────────────────────────────────────────────────────────
   function renderFormView(hintText) {
     titleEl.textContent = IS_RETRY ? 'Sign in again' : 'Sign In';
     body.innerHTML = '';
@@ -314,7 +309,6 @@ async function injectCredentialModal(view, loginForm, savedCreds, options = {}) 
     if (inputs[0]) setTimeout(function() { inputs[0].focus(); }, 80);
   }
 
-  // ── mount ─────────────────────────────────────────────────────────────────
   modal.appendChild(header);
   modal.appendChild(domEl);
   modal.appendChild(body);
@@ -328,7 +322,6 @@ async function injectCredentialModal(view, loginForm, savedCreds, options = {}) 
 }
 
 ipcMain.handle('fill-login-fields', async (_event, tabId, fills) => {
-  // fills: [{selector, value}] — values come from local storage, never from the backend WS
   const view = getViewForTab(tabId)
   if (!view) return { success: false }
   for (const { selector, value } of fills) {
@@ -368,17 +361,22 @@ ipcMain.handle('submit-login-form', async (_event, tabId, submitSelector) => {
   return { success: true }
 })
 
-let mainWindow
-let sidebarOpen = false
-let sidebarWidth = 0
-
-const tabs = new Map()
-let activeTabId = null
+// ── Per-window State ─────────────────────────────────────────────────────────
+// allTabs: tabId -> { view, title, url, isAgent, isPrivate, winId }
+// winStates: win.id -> { win, isPrivate, tabIds: Set, activeTabId, sidebarOpen, sidebarWidth, pendingCredVerifyTabId }
+const allTabs = new Map()
+const winStates = new Map()
 let nextTabId = 1
-let pendingCredVerifyTabId = null
 
-const TOOLBAR_HEIGHT = 128
+const TOOLBAR_HEIGHT_NORMAL  = 128
+const TOOLBAR_HEIGHT_PRIVATE = 158  // +30px for the private window banner
 
+function stateForWindow(win) { return win ? winStates.get(win.id) : null }
+function stateForEvent(event) { return stateForWindow(event.sender.getOwnerBrowserWindow()) }
+function getActiveView(state) { return state?.activeTabId ? allTabs.get(state.activeTabId)?.view : null }
+function getViewForTab(tabId) { return allTabs.get(tabId)?.view || null }
+
+// ── Login Form Detection ─────────────────────────────────────────────────────
 const DETECT_LOGIN_FORM_SCRIPT = `
   (function() {
     var pwFields = Array.from(document.querySelectorAll('input[type="password"]')).filter(function(el) {
@@ -407,10 +405,8 @@ const DETECT_LOGIN_FORM_SCRIPT = `
   })()
 `
 
-const getActiveView = () => activeTabId ? tabs.get(activeTabId)?.view : null
-const getViewForTab = (tabId) => tabId ? tabs.get(tabId)?.view : getActiveView()
-
-function scheduleCredVerify(tabId, view) {
+// ── Credential Verification ──────────────────────────────────────────────────
+function scheduleCredVerify(tabId, view, state) {
   const VERIFY_DELAY_MS = 6000
   let done = false
   const finish = () => {
@@ -418,184 +414,128 @@ function scheduleCredVerify(tabId, view) {
     done = true
     view.webContents.removeListener('did-finish-load', onLoad)
     clearTimeout(timer)
-    doCredVerify(tabId, view)
+    doCredVerify(tabId, view, state)
   }
   const onLoad = () => finish()
   const timer = setTimeout(finish, VERIFY_DELAY_MS)
   view.webContents.once('did-finish-load', onLoad)
 }
 
-async function doCredVerify(tabId, view) {
+async function doCredVerify(tabId, view, state) {
   try {
     const url = view.webContents.getURL()
     if (!url || url.startsWith('about:') || url.startsWith('file:') || url.startsWith('chrome:')) {
-      if (mainWindow) mainWindow.webContents.send('cred-modal-closed')
+      if (state?.win) state.win.webContents.send('cred-modal-closed')
       return
     }
     const loginForm = await view.webContents.executeJavaScript(DETECT_LOGIN_FORM_SCRIPT)
     if (loginForm && loginForm.fields && loginForm.fields.length > 0) {
       const savedCreds = loadCredentials()[loginForm.domain] || []
-      await injectCredentialModal(view, loginForm, savedCreds, { isRetry: true })
+      await injectCredentialModal(view, loginForm, savedCreds, state?.win, { isRetry: true })
     } else {
-      if (mainWindow) mainWindow.webContents.send('cred-modal-closed')
+      if (state?.win) state.win.webContents.send('cred-modal-closed')
     }
   } catch (_) {
-    if (mainWindow) mainWindow.webContents.send('cred-modal-closed')
+    if (state?.win) state.win.webContents.send('cred-modal-closed')
   }
 }
 
-const updateBrowserViewBounds = () => {
-  const view = getActiveView()
-  if (!mainWindow || !view) return
-  const bounds = mainWindow.getContentBounds()
-  const reserved = sidebarOpen ? sidebarWidth : 0
-  
-  const activeTab = tabs.get(activeTabId)
-  const isAgent = activeTab?.isAgent
-  const borderWidth = isAgent ? 6 : 0
+// ── Layout ───────────────────────────────────────────────────────────────────
+function updateBrowserViewBounds(state) {
+  const view = getActiveView(state)
+  if (!state?.win || !view) return
+  const bounds = state.win.getContentBounds()
+  const reserved = state.sidebarOpen ? state.sidebarWidth : 0
+  const tab = allTabs.get(state.activeTabId)
+  const borderWidth = tab?.isAgent ? 6 : 0
+  const toolbarH = state.isPrivate ? TOOLBAR_HEIGHT_PRIVATE : TOOLBAR_HEIGHT_NORMAL
 
   view.setBounds({
     x: borderWidth,
-    y: TOOLBAR_HEIGHT + borderWidth,
-    width: bounds.width - reserved - (borderWidth * 2),
-    height: bounds.height - TOOLBAR_HEIGHT - (borderWidth * 2)
+    y: toolbarH + borderWidth,
+    width: bounds.width - reserved - borderWidth * 2,
+    height: bounds.height - toolbarH - borderWidth * 2
   })
 }
 
-function sendTabsUpdate() {
-  if (!mainWindow) return
+function sendTabsUpdate(state) {
+  if (!state?.win) return
   const tabList = []
-  for (const [id, tab] of tabs) {
-    tabList.push({ id, title: tab.title, url: tab.url })
+  for (const tabId of state.tabIds) {
+    const tab = allTabs.get(tabId)
+    if (tab) tabList.push({ id: tabId, title: tab.title, url: tab.url, isPrivate: tab.isPrivate })
   }
-  mainWindow.webContents.send('tabs-updated', { tabs: tabList, activeTabId })
+  state.win.webContents.send('tabs-updated', { tabs: tabList, activeTabId: state.activeTabId })
 }
 
-function wireViewEvents(tabId, view) {
-  // Open target="_blank" / window.open from web pages in a new tab instead of popup
+// ── BrowserView Event Wiring ─────────────────────────────────────────────────
+function wireViewEvents(tabId, view, state) {
   view.webContents.setWindowOpenHandler(({ url }) => {
     const u = (url || '').trim()
     if (u && (u.startsWith('http://') || u.startsWith('https://'))) {
-      createTab(u)
+      createTab(u, { isPrivate: state.isPrivate }, state)
     }
     return { action: 'deny' }
   })
 
   view.webContents.on('did-start-loading', () => {
-    if (tabId === activeTabId && mainWindow) {
-      mainWindow.webContents.send('navigation-start')
+    if (tabId === state.activeTabId && state.win) {
+      state.win.webContents.send('navigation-start')
     }
   })
 
   view.webContents.on('did-finish-load', () => {
-    const tab = tabs.get(tabId)
+    const tab = allTabs.get(tabId)
     if (tab) {
       tab.url = view.webContents.getURL()
       tab.title = view.webContents.getTitle() || tab.url
-      sendTabsUpdate()
+      sendTabsUpdate(state)
     }
-    if (tabId === activeTabId && mainWindow) {
-      mainWindow.webContents.send('navigation-complete', {
+    if (tabId === state.activeTabId && state.win) {
+      state.win.webContents.send('navigation-complete', {
         url: view.webContents.getURL(),
         title: view.webContents.getTitle(),
         canGoBack: view.webContents.canGoBack(),
         canGoForward: view.webContents.canGoForward()
       })
     }
-    
+
     view.webContents.insertCSS(`
       #ai-sel-popup {
-        position: fixed;
-        z-index: 2147483646;
-        background: #1a1a1a;
-        border: 1px solid #444;
-        border-radius: 12px;
-        padding: 14px 18px;
-        display: flex;
-        flex-direction: column;
-        align-items: center;
-        gap: 10px;
-        min-width: 240px;
-        box-shadow: 0 4px 24px rgba(0,0,0,0.5);
+        position: fixed; z-index: 2147483646; background: #1a1a1a;
+        border: 1px solid #444; border-radius: 12px; padding: 14px 18px;
+        display: flex; flex-direction: column; align-items: center; gap: 10px;
+        min-width: 240px; box-shadow: 0 4px 24px rgba(0,0,0,0.5);
         font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
-        opacity: 0;
-        pointer-events: none;
-        transition: opacity 0.15s ease;
+        opacity: 0; pointer-events: none; transition: opacity 0.15s ease;
       }
-      #ai-sel-popup.visible {
-        opacity: 1;
-        pointer-events: auto;
-      }
+      #ai-sel-popup.visible { opacity: 1; pointer-events: auto; }
       #ai-sel-popup .ai-sel-summarize {
-        padding: 8px 20px;
-        border-radius: 8px;
-        border: none;
+        padding: 8px 20px; border-radius: 8px; border: none;
         background: linear-gradient(135deg, #3a3a4a 0%, #2d2d3a 100%);
-        color: #e8e8e8;
-        font-size: 13px;
-        font-weight: 600;
-        cursor: pointer;
-        letter-spacing: 0.3px;
-        transition: background 0.2s, transform 0.1s;
+        color: #e8e8e8; font-size: 13px; font-weight: 600; cursor: pointer;
+        letter-spacing: 0.3px; transition: background 0.2s, transform 0.1s;
         box-shadow: 0 1px 3px rgba(0,0,0,0.3);
       }
-      #ai-sel-popup .ai-sel-summarize:hover {
-        background: linear-gradient(135deg, #4a4a5a 0%, #3d3d4a 100%);
-        transform: translateY(-1px);
-      }
-      #ai-sel-popup .ai-sel-summarize:active {
-        transform: translateY(0);
-      }
-      #ai-sel-popup .ai-sel-or {
-        font-size: 11px;
-        color: #888;
-        letter-spacing: 0.5px;
-        text-transform: uppercase;
-      }
+      #ai-sel-popup .ai-sel-summarize:hover { background: linear-gradient(135deg, #4a4a5a 0%, #3d3d4a 100%); transform: translateY(-1px); }
+      #ai-sel-popup .ai-sel-summarize:active { transform: translateY(0); }
+      #ai-sel-popup .ai-sel-or { font-size: 11px; color: #888; letter-spacing: 0.5px; text-transform: uppercase; }
       #ai-sel-popup .ai-sel-input-wrap {
-        width: 100%;
-        display: flex;
-        align-items: center;
-        border: 1px solid #444;
-        border-radius: 8px;
-        background: #252526;
-        overflow: hidden;
+        width: 100%; display: flex; align-items: center;
+        border: 1px solid #444; border-radius: 8px; background: #252526; overflow: hidden;
       }
-      #ai-sel-popup .ai-sel-input-wrap:focus-within {
-        border-color: #555;
-      }
+      #ai-sel-popup .ai-sel-input-wrap:focus-within { border-color: #555; }
       #ai-sel-popup .ai-sel-input-wrap input {
-        flex: 1;
-        min-width: 0;
-        padding: 8px 12px;
-        border: none;
-        background: transparent;
-        color: #e0e0e0;
-        font-size: 12px;
-        font-family: inherit;
-        outline: none;
+        flex: 1; min-width: 0; padding: 8px 12px; border: none;
+        background: transparent; color: #e0e0e0; font-size: 12px; font-family: inherit; outline: none;
       }
-      #ai-sel-popup .ai-sel-input-wrap input::placeholder {
-        color: #666;
-      }
+      #ai-sel-popup .ai-sel-input-wrap input::placeholder { color: #666; }
       #ai-sel-popup .ai-sel-send {
-        flex-shrink: 0;
-        width: 36px;
-        height: 36px;
-        border: none;
-        background: transparent;
-        color: #888;
-        cursor: pointer;
-        display: flex;
-        align-items: center;
-        justify-content: center;
-        padding: 0;
-        transition: color 0.15s, background 0.15s;
+        flex-shrink: 0; width: 36px; height: 36px; border: none; background: transparent;
+        color: #888; cursor: pointer; display: flex; align-items: center; justify-content: center;
+        padding: 0; transition: color 0.15s, background 0.15s;
       }
-      #ai-sel-popup .ai-sel-send:hover {
-        color: #e0e0e0;
-        background: #333;
-      }
+      #ai-sel-popup .ai-sel-send:hover { color: #e0e0e0; background: #333; }
     `)
     view.webContents.executeJavaScript(`
       (function() {
@@ -624,23 +564,17 @@ function wireViewEvents(tabId, view) {
         popup.appendChild(wrap);
         document.body.appendChild(popup);
         var selText = '';
-        function hide() {
-          popup.classList.remove('visible');
-          inp.value = '';
-        }
+        function hide() { popup.classList.remove('visible'); inp.value = ''; }
         function show(centerX, y) {
-          popup.style.left = centerX + 'px';
-          popup.style.top = y + 'px';
+          popup.style.left = centerX + 'px'; popup.style.top = y + 'px';
           popup.style.transform = 'translateX(-50%)';
-          popup.classList.add('visible');
-          inp.value = '';
+          popup.classList.add('visible'); inp.value = '';
           setTimeout(function() { inp.focus(); }, 50);
         }
         function sendAsk() {
           var q = inp.value.trim();
           console.log('__AI_ACTION__:' + JSON.stringify({ type: 'ask', text: selText, query: q }));
-          hide();
-          window.getSelection().removeAllRanges();
+          hide(); window.getSelection().removeAllRanges();
         }
         document.addEventListener('mouseup', function(e) {
           if (popup.contains(e.target)) return;
@@ -650,12 +584,10 @@ function wireViewEvents(tabId, view) {
             var range = sel.getRangeAt(0);
             var t = (sel ? sel.toString() : '').trim();
             if (t.length <= 3) { hide(); return; }
-            // Don't show for selections inside editable fields (inputs, textareas, contenteditable)
             function isInEditable(node) {
               while (node && node !== document.body) {
                 if (node.nodeType === 1) {
-                  var el = node;
-                  var tag = el.tagName;
+                  var el = node; var tag = el.tagName;
                   if (tag === 'INPUT' || tag === 'TEXTAREA') return true;
                   if (el.isContentEditable) return true;
                 }
@@ -665,10 +597,7 @@ function wireViewEvents(tabId, view) {
             }
             var active = document.activeElement;
             if ((active && (active.tagName === 'INPUT' || active.tagName === 'TEXTAREA' || active.isContentEditable)) ||
-                isInEditable(range.commonAncestorContainer)) {
-              hide();
-              return;
-            }
+                isInEditable(range.commonAncestorContainer)) { hide(); return; }
             selText = t;
             var rect = range.getBoundingClientRect();
             var centerX = rect.left + rect.width / 2;
@@ -677,21 +606,13 @@ function wireViewEvents(tabId, view) {
             show(Math.max(120, Math.min(window.innerWidth - 120, centerX)), py);
           }, 10);
         });
-        document.addEventListener('mousedown', function(e) {
-          if (!popup.contains(e.target)) hide();
-        });
+        document.addEventListener('mousedown', function(e) { if (!popup.contains(e.target)) hide(); });
         document.addEventListener('scroll', hide, true);
         btnS.addEventListener('click', function() {
           console.log('__AI_ACTION__:' + JSON.stringify({ type: 'summarize', text: selText }));
-          hide();
-          window.getSelection().removeAllRanges();
+          hide(); window.getSelection().removeAllRanges();
         });
-        inp.addEventListener('keydown', function(e) {
-          if (e.key === 'Enter') {
-            e.preventDefault();
-            sendAsk();
-          }
-        });
+        inp.addEventListener('keydown', function(e) { if (e.key === 'Enter') { e.preventDefault(); sendAsk(); } });
         sendBtn.addEventListener('click', sendAsk);
       })()
     `)
@@ -699,30 +620,18 @@ function wireViewEvents(tabId, view) {
     if (tab && tab.isAgent) {
       view.webContents.insertCSS(`
         #agent-toast-pill {
-          position: fixed;
-          top: 24px;
-          left: 50%;
-          transform: translateX(-50%);
-          z-index: 2147483647;
-          padding: 8px 24px;
-          border-radius: 30px;
-          background: linear-gradient(135deg, #6366f1, #8b5cf6);
-          color: white;
+          position: fixed; top: 24px; left: 50%; transform: translateX(-50%);
+          z-index: 2147483647; padding: 8px 24px; border-radius: 30px;
+          background: linear-gradient(135deg, #6366f1, #8b5cf6); color: white;
           font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
-          font-size: 13px;
-          font-weight: 500;
-          letter-spacing: 0.3px;
+          font-size: 13px; font-weight: 500; letter-spacing: 0.3px;
           box-shadow: 0 4px 20px rgba(139, 92, 246, 0.4);
-          border: 1px solid rgba(255, 255, 255, 0.2);
-          backdrop-filter: blur(8px);
-          pointer-events: none;
-          opacity: 0;
+          border: 1px solid rgba(255, 255, 255, 0.2); backdrop-filter: blur(8px);
+          pointer-events: none; opacity: 0;
           transition: opacity 0.4s cubic-bezier(0.2, 0.8, 0.2, 1);
           animation: agent-float 3s ease-in-out infinite;
         }
-        #agent-toast-pill.visible {
-          opacity: 1;
-        }
+        #agent-toast-pill.visible { opacity: 1; }
         @keyframes agent-float {
           0%, 100% { transform: translate(-50%, 0); }
           50% { transform: translate(-50%, -6px); }
@@ -734,60 +643,50 @@ function wireViewEvents(tabId, view) {
           el.id = 'agent-toast-pill';
           el.textContent = 'AI Assistant is working...';
           document.body.appendChild(el);
-          // Force reflow
           void el.offsetWidth;
           el.classList.add('visible');
         }
       `)
     }
 
-    // ── Login form detection ───────────────────────────────────────────────
-    setTimeout(async () => {
-      try {
-        const url = view.webContents.getURL()
-        if (!url || url.startsWith('about:') || url.startsWith('file:') || url.startsWith('chrome:')) return
-        const loginForm = await view.webContents.executeJavaScript(DETECT_LOGIN_FORM_SCRIPT)
-        if (loginForm && loginForm.fields.length > 0) {
-          const savedCreds = loadCredentials()[loginForm.domain] || []
-          await injectCredentialModal(view, loginForm, savedCreds)
-        }
-      } catch (_) {}
-    }, 1800)
+    // Skip credential detection for private tabs/windows
+    if (!tab?.isPrivate) {
+      setTimeout(async () => {
+        try {
+          const url = view.webContents.getURL()
+          if (!url || url.startsWith('about:') || url.startsWith('file:') || url.startsWith('chrome:')) return
+          const loginForm = await view.webContents.executeJavaScript(DETECT_LOGIN_FORM_SCRIPT)
+          if (loginForm && loginForm.fields.length > 0) {
+            const savedCreds = loadCredentials()[loginForm.domain] || []
+            await injectCredentialModal(view, loginForm, savedCreds, state.win)
+          }
+        } catch (_) {}
+      }, 1800)
+    }
   })
 
   view.webContents.on('did-fail-load', (event, errorCode, errorDescription) => {
-    if (tabId === activeTabId && mainWindow) {
-      mainWindow.webContents.send('navigation-error', { errorCode, errorDescription })
+    if (tabId === state.activeTabId && state.win) {
+      state.win.webContents.send('navigation-error', { errorCode, errorDescription })
     }
   })
 
   view.webContents.on('did-navigate', (event, url) => {
-    const tab = tabs.get(tabId)
-    if (tab) {
-      tab.url = url
-      tab.title = view.webContents.getTitle() || url
-      sendTabsUpdate()
-    }
-    if (tabId === activeTabId && mainWindow) {
-      mainWindow.webContents.send('url-changed', {
-        url,
-        canGoBack: view.webContents.canGoBack(),
-        canGoForward: view.webContents.canGoForward()
+    const tab = allTabs.get(tabId)
+    if (tab) { tab.url = url; tab.title = view.webContents.getTitle() || url; sendTabsUpdate(state) }
+    if (tabId === state.activeTabId && state.win) {
+      state.win.webContents.send('url-changed', {
+        url, canGoBack: view.webContents.canGoBack(), canGoForward: view.webContents.canGoForward()
       })
     }
   })
 
   view.webContents.on('did-navigate-in-page', (event, url) => {
-    const tab = tabs.get(tabId)
-    if (tab) {
-      tab.url = url
-      sendTabsUpdate()
-    }
-    if (tabId === activeTabId && mainWindow) {
-      mainWindow.webContents.send('url-changed', {
-        url,
-        canGoBack: view.webContents.canGoBack(),
-        canGoForward: view.webContents.canGoForward()
+    const tab = allTabs.get(tabId)
+    if (tab) { tab.url = url; sendTabsUpdate(state) }
+    if (tabId === state.activeTabId && state.win) {
+      state.win.webContents.send('url-changed', {
+        url, canGoBack: view.webContents.canGoBack(), canGoForward: view.webContents.canGoForward()
       })
     }
   })
@@ -796,11 +695,8 @@ function wireViewEvents(tabId, view) {
     if (message.startsWith('__AI_ACTION__:')) {
       try {
         const data = JSON.parse(message.substring('__AI_ACTION__:'.length))
-        if (mainWindow) {
-          mainWindow.webContents.send('selection-action', data)
-          mainWindow.webContents.focus()
-        }
-      } catch (e) {}
+        if (state.win) { state.win.webContents.send('selection-action', data); state.win.webContents.focus() }
+      } catch (_) {}
     }
     if (message.startsWith('__CRED_SAVE__:')) {
       try {
@@ -810,103 +706,108 @@ function wireViewEvents(tabId, view) {
         credential.id = crypto.randomUUID()
         store[domain].push(credential)
         saveCredentials(store)
-      } catch (e) {}
+      } catch (_) {}
     }
-    if (message === '__CRED_SUBMITTED__') {
-      pendingCredVerifyTabId = tabId
-    }
+    if (message === '__CRED_SUBMITTED__') { state.pendingCredVerifyTabId = tabId }
     if (message === '__CRED_PROCEED__') {
-      pendingCredVerifyTabId = null
-      if (mainWindow) mainWindow.webContents.send('cred-modal-closed')
+      state.pendingCredVerifyTabId = null
+      if (state.win) state.win.webContents.send('cred-modal-closed')
     }
     if (message === '__CRED_DISMISSED__') {
-      if (pendingCredVerifyTabId === tabId) {
-        pendingCredVerifyTabId = null
-        scheduleCredVerify(tabId, view)
+      if (state.pendingCredVerifyTabId === tabId) {
+        state.pendingCredVerifyTabId = null
+        scheduleCredVerify(tabId, view, state)
       } else {
-        if (mainWindow) mainWindow.webContents.send('cred-modal-closed')
+        if (state.win) state.win.webContents.send('cred-modal-closed')
       }
     }
   })
 
   view.webContents.on('page-title-updated', (event, title) => {
-    const tab = tabs.get(tabId)
-    if (tab) {
-      tab.title = title
-      sendTabsUpdate()
-    }
+    const tab = allTabs.get(tabId)
+    if (tab) { tab.title = title; sendTabsUpdate(state) }
   })
 }
 
-function createTab(url, options = {}) {
+// ── Tab Management ───────────────────────────────────────────────────────────
+function createTab(url, options = {}, state) {
   const tabId = nextTabId++
   const targetUrl = url || 'https://www.google.com'
   const isAgent = options.isAgent || false
   const background = options.background || false
+  const isPrivate = options.isPrivate || state.isPrivate || false
 
-  const view = new BrowserView({
-    webPreferences: {
-      nodeIntegration: false,
-      contextIsolation: true,
-      webSecurity: true
-    }
-  })
+  const webPreferences = { nodeIntegration: false, contextIsolation: true, webSecurity: true }
+  if (isPrivate) {
+    webPreferences.session = session.fromPartition(`private-${tabId}`)
+  }
 
-  tabs.set(tabId, { view, title: 'New Tab', url: targetUrl, isAgent })
-  wireViewEvents(tabId, view)
+  const view = new BrowserView({ webPreferences })
+  allTabs.set(tabId, { view, title: 'New Tab', url: targetUrl, isAgent, isPrivate, winId: state.win.id })
+  state.tabIds.add(tabId)
+
+  wireViewEvents(tabId, view, state)
   view.webContents.loadURL(targetUrl)
-  if (!background) switchTab(tabId)
-  else sendTabsUpdate()
+
+  if (!background) switchTab(tabId, state)
+  else sendTabsUpdate(state)
   return tabId
 }
 
-function switchTab(tabId) {
-  if (!tabs.has(tabId) || !mainWindow) return
+function switchTab(tabId, state) {
+  if (!state.tabIds.has(tabId) || !state.win) return
 
-  if (activeTabId && tabs.has(activeTabId)) {
-    mainWindow.removeBrowserView(tabs.get(activeTabId).view)
+  if (state.activeTabId && state.tabIds.has(state.activeTabId)) {
+    const prevTab = allTabs.get(state.activeTabId)
+    if (prevTab) state.win.removeBrowserView(prevTab.view)
   }
 
-  activeTabId = tabId
-  const tab = tabs.get(tabId)
-  mainWindow.addBrowserView(tab.view)
-  updateBrowserViewBounds()
-  sendTabsUpdate()
+  state.activeTabId = tabId
+  const tab = allTabs.get(tabId)
+  if (tab) state.win.addBrowserView(tab.view)
+  updateBrowserViewBounds(state)
+  sendTabsUpdate(state)
 
-  mainWindow.webContents.send('url-changed', {
-    url: tab.view.webContents.getURL() || tab.url,
-    canGoBack: tab.view.webContents.canGoBack(),
-    canGoForward: tab.view.webContents.canGoForward()
+  state.win.webContents.send('url-changed', {
+    url: tab?.view.webContents.getURL() || tab?.url || '',
+    canGoBack: tab?.view.webContents.canGoBack() || false,
+    canGoForward: tab?.view.webContents.canGoForward() || false
   })
 }
 
-function closeTab(tabId) {
-  if (!tabs.has(tabId)) return
+function closeTab(tabId, state) {
+  if (!state.tabIds.has(tabId)) return
 
-  const tab = tabs.get(tabId)
-  if (activeTabId === tabId) {
-    mainWindow.removeBrowserView(tab.view)
+  const tab = allTabs.get(tabId)
+  if (tab) {
+    if (state.activeTabId === tabId) state.win.removeBrowserView(tab.view)
+    try { tab.view.webContents.close() } catch (_) {}
+    allTabs.delete(tabId)
   }
+  state.tabIds.delete(tabId)
 
-  tab.view.webContents.close()
-  tabs.delete(tabId)
-
-  if (tabs.size === 0) {
-    activeTabId = null
-    createTab()
+  if (state.tabIds.size === 0) {
+    state.activeTabId = null
+    if (state.isPrivate) {
+      // Close private window when last tab closes
+      state.win.close()
+    } else {
+      createTab('https://www.google.com', {}, state)
+    }
     return
   }
 
-  if (activeTabId === tabId) {
-    const ids = [...tabs.keys()]
-    switchTab(ids[ids.length - 1])
+  if (state.activeTabId === tabId) {
+    const ids = [...state.tabIds]
+    switchTab(ids[ids.length - 1], state)
   } else {
-    sendTabsUpdate()
+    sendTabsUpdate(state)
   }
 }
 
-const createWindow = () => {
-  mainWindow = new BrowserWindow({
+// ── Window Creation ──────────────────────────────────────────────────────────
+function createWindow(isPrivate = false) {
+  const win = new BrowserWindow({
     width: 1400,
     height: 900,
     minWidth: 800,
@@ -917,42 +818,91 @@ const createWindow = () => {
       preload: path.join(__dirname, 'preload.js')
     },
     titleBarStyle: 'hidden',
-    frame: false
+    frame: false,
+    backgroundColor: isPrivate ? '#16162a' : '#1e1e1e'
   })
 
-  mainWindow.loadFile('index.html').then(() => {
-    mainWindow.maximize()
-    createTab()
-    // Open links with target="_blank" / Ctrl+Click (sidebar, etc.) in a new tab instead of popup
-    mainWindow.webContents.setWindowOpenHandler(({ url }) => {
+  const state = {
+    win,
+    isPrivate,
+    tabIds: new Set(),
+    activeTabId: null,
+    sidebarOpen: false,
+    sidebarWidth: 0,
+    pendingCredVerifyTabId: null
+  }
+  winStates.set(win.id, state)
+
+  win.loadFile('index.html').then(() => {
+    win.maximize()
+    if (isPrivate) {
+      win.webContents.send('private-window-mode')
+    }
+    createTab('https://www.google.com', { isPrivate }, state)
+    win.webContents.setWindowOpenHandler(({ url }) => {
       const u = (url || '').trim()
       if (u && (u.startsWith('http://') || u.startsWith('https://'))) {
-        createTab(u)
+        createTab(u, { isPrivate }, state)
       }
       return { action: 'deny' }
     })
   })
 
-  mainWindow.on('resize', updateBrowserViewBounds)
-  mainWindow.on('maximize', updateBrowserViewBounds)
-  mainWindow.on('unmaximize', updateBrowserViewBounds)
+  win.on('resize', () => updateBrowserViewBounds(state))
+  win.on('maximize', () => updateBrowserViewBounds(state))
+  win.on('unmaximize', () => updateBrowserViewBounds(state))
+
+  win.on('closed', () => {
+    for (const tabId of state.tabIds) {
+      const tab = allTabs.get(tabId)
+      if (tab) {
+        try { tab.view.webContents.close() } catch (_) {}
+        allTabs.delete(tabId)
+      }
+    }
+    winStates.delete(win.id)
+  })
+
+  return state
 }
 
-ipcMain.on('create-tab', (event, url) => { createTab(url || undefined) })
-ipcMain.on('close-tab', (event, tabId) => { closeTab(tabId) })
-ipcMain.on('switch-tab', (event, tabId) => { switchTab(tabId) })
-ipcMain.handle('create-agent-tab', (event, url, background) => createTab(url || 'https://www.google.com', { isAgent: true, background: !!background }))
+// ── IPC: Tabs ────────────────────────────────────────────────────────────────
+ipcMain.on('create-tab', (event, url) => {
+  const state = stateForEvent(event)
+  if (state) createTab(url || undefined, { isPrivate: state.isPrivate }, state)
+})
+
+ipcMain.on('create-private-window', () => {
+  createWindow(true)
+})
+
+ipcMain.on('close-tab', (event, tabId) => {
+  const state = stateForEvent(event)
+  if (state) closeTab(tabId, state)
+})
+
+ipcMain.on('switch-tab', (event, tabId) => {
+  const state = stateForEvent(event)
+  if (state) switchTab(tabId, state)
+})
+
+ipcMain.handle('create-agent-tab', (event, url, background) => {
+  const state = stateForEvent(event)
+  if (!state) return null
+  return createTab(url || 'https://www.google.com', { isAgent: true, isPrivate: state.isPrivate, background: !!background }, state)
+})
 
 ipcMain.on('start-agent-control', (event, tabId) => {
-  const tab = tabs.get(tabId)
+  const tab = allTabs.get(tabId)
   if (tab && !tab.isAgent) {
     tab.isAgent = true
-    updateBrowserViewBounds()
+    const state = winStates.get(tab.winId)
+    if (state) updateBrowserViewBounds(state)
   }
 })
 
 ipcMain.on('stop-agent-control', (event, tabId) => {
-  const tab = tabs.get(tabId)
+  const tab = allTabs.get(tabId)
   if (tab && tab.isAgent) {
     tab.isAgent = false
     tab.view.webContents.executeJavaScript(`
@@ -961,12 +911,15 @@ ipcMain.on('stop-agent-control', (event, tabId) => {
         if (el) el.remove();
       })()
     `).catch(() => {})
-    updateBrowserViewBounds()
+    const state = winStates.get(tab.winId)
+    if (state) updateBrowserViewBounds(state)
   }
 })
 
+// ── IPC: Navigation ──────────────────────────────────────────────────────────
 ipcMain.on('navigate', (event, url) => {
-  const view = getActiveView()
+  const state = stateForEvent(event)
+  const view = getActiveView(state)
   if (!view) return
   let targetUrl = url
   if (!url.startsWith('http://') && !url.startsWith('https://')) {
@@ -979,51 +932,60 @@ ipcMain.on('navigate', (event, url) => {
   view.webContents.loadURL(targetUrl)
 })
 
-ipcMain.on('get-navigation-state', () => {
-  const view = getActiveView()
-  if (mainWindow && view) {
-    mainWindow.webContents.send('navigation-state-changed', {
+ipcMain.on('get-navigation-state', (event) => {
+  const state = stateForEvent(event)
+  const view = getActiveView(state)
+  if (state?.win && view) {
+    state.win.webContents.send('navigation-state-changed', {
       canGoBack: view.webContents.canGoBack(),
       canGoForward: view.webContents.canGoForward()
     })
   }
 })
 
-ipcMain.on('go-back', () => { const v = getActiveView(); if (v) v.webContents.goBack() })
-ipcMain.on('go-forward', () => { const v = getActiveView(); if (v) v.webContents.goForward() })
-ipcMain.on('reload', () => { const v = getActiveView(); if (v) v.webContents.reload() })
+ipcMain.on('go-back',    (event) => { const v = getActiveView(stateForEvent(event)); if (v) v.webContents.goBack() })
+ipcMain.on('go-forward', (event) => { const v = getActiveView(stateForEvent(event)); if (v) v.webContents.goForward() })
+ipcMain.on('reload',     (event) => { const v = getActiveView(stateForEvent(event)); if (v) v.webContents.reload() })
 
-// Hide/show the active BrowserView so overlays in the renderer HTML become visible
-ipcMain.on('hide-browser-view', () => {
-  if (!mainWindow || !activeTabId) return
-  const tab = tabs.get(activeTabId)
-  if (tab) mainWindow.removeBrowserView(tab.view)
-})
-ipcMain.on('show-browser-view', () => {
-  if (!mainWindow || !activeTabId) return
-  const tab = tabs.get(activeTabId)
-  if (tab) { mainWindow.addBrowserView(tab.view); updateBrowserViewBounds() }
-})
-ipcMain.on('close-window', () => { if (mainWindow) mainWindow.close() })
-ipcMain.on('minimize-window', () => { if (mainWindow) mainWindow.minimize() })
-
-ipcMain.on('maximize-window', () => {
-  if (!mainWindow) return
-  if (mainWindow.isMaximized()) mainWindow.unmaximize()
-  else mainWindow.maximize()
-  setTimeout(updateBrowserViewBounds, 100)
-})
-
+// ── IPC: Sidebar / Layout ────────────────────────────────────────────────────
 ipcMain.on('sidebar-toggled', (event, isOpen) => {
-  sidebarOpen = isOpen
-  updateBrowserViewBounds()
+  const state = stateForEvent(event)
+  if (state) { state.sidebarOpen = isOpen; updateBrowserViewBounds(state) }
 })
 
 ipcMain.on('sidebar-width-changed', (event, width) => {
-  sidebarWidth = width
-  updateBrowserViewBounds()
+  const state = stateForEvent(event)
+  if (state) { state.sidebarWidth = width; updateBrowserViewBounds(state) }
 })
 
+ipcMain.on('hide-browser-view', (event) => {
+  const state = stateForEvent(event)
+  if (!state?.win || !state.activeTabId) return
+  const tab = allTabs.get(state.activeTabId)
+  if (tab) state.win.removeBrowserView(tab.view)
+})
+
+ipcMain.on('show-browser-view', (event) => {
+  const state = stateForEvent(event)
+  if (!state?.win || !state.activeTabId) return
+  const tab = allTabs.get(state.activeTabId)
+  if (tab) { state.win.addBrowserView(tab.view); updateBrowserViewBounds(state) }
+})
+
+// ── IPC: Window Controls ─────────────────────────────────────────────────────
+ipcMain.on('close-window',    (event) => { event.sender.getOwnerBrowserWindow()?.close() })
+ipcMain.on('minimize-window', (event) => { event.sender.getOwnerBrowserWindow()?.minimize() })
+
+ipcMain.on('maximize-window', (event) => {
+  const win = event.sender.getOwnerBrowserWindow()
+  if (!win) return
+  if (win.isMaximized()) win.unmaximize()
+  else win.maximize()
+  const state = stateForWindow(win)
+  if (state) setTimeout(() => updateBrowserViewBounds(state), 100)
+})
+
+// ── IPC: Page Context / Agent Actions ────────────────────────────────────────
 ipcMain.handle('get-page-context', async (event, tabId) => {
   const view = getViewForTab(tabId)
   if (!view) return { title: '', url: '', headings: [], elements: [], mainText: '' }
@@ -1035,16 +997,13 @@ ipcMain.handle('get-page-context', async (event, tabId) => {
         var MAX = 200;
         var selectors = 'a[href], button, input, textarea, select, [role="button"], [role="link"], [role="tab"], [type="submit"], [onclick]';
         var els = document.querySelectorAll(selectors);
-
         for (var i = 0; i < els.length && id < MAX; i++) {
           var el = els[i];
           var rect = el.getBoundingClientRect();
           if (rect.width === 0 && rect.height === 0) continue;
           if (el.disabled) continue;
           if (el.type === 'hidden') continue;
-
           el.setAttribute('data-ai-id', id);
-
           var info = { id: id, tag: el.tagName.toLowerCase() };
           if (el.type) info.type = el.type;
           if (el.name) info.name = el.name;
@@ -1055,45 +1014,30 @@ ipcMain.handle('get-page-context', async (event, tabId) => {
           if (el.title) info.title = el.title;
           if (el.getAttribute('role')) info.role = el.getAttribute('role');
           if (el.value && (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA')) info.value = el.value;
-
           var text = (el.innerText || el.textContent || '').trim();
           if (text && text.length > 0) info.text = text.substring(0, 80);
-
           elements.push(info);
           id++;
         }
-
         var headings = [];
         var hs = document.querySelectorAll('h1, h2, h3');
         for (var j = 0; j < hs.length && j < 10; j++) {
           var t = hs[j].textContent.trim();
           if (t) headings.push(t.substring(0, 100));
         }
-
         function getMainText() {
-          var root =
-            document.querySelector('main') ||
-            document.querySelector('article') ||
-            document.querySelector('#main') ||
-            document.querySelector('#content') ||
-            document.body;
+          var root = document.querySelector('main') || document.querySelector('article') ||
+            document.querySelector('#main') || document.querySelector('#content') || document.body;
           var text = (root && root.innerText) ? root.innerText : (document.body ? document.body.innerText : '');
           text = (text || '').replace(/\\s+/g, ' ').trim();
           if (text.length > 4000) text = text.substring(0, 4000);
           return text;
         }
-
-        return {
-          title: document.title,
-          url: window.location.href,
-          headings: headings,
-          elements: elements,
-          mainText: getMainText()
-        };
+        return { title: document.title, url: window.location.href, headings: headings, elements: elements, mainText: getMainText() };
       })()
     `)
     return context
-  } catch (e) {
+  } catch (_) {
     return { title: '', url: '', headings: [], elements: [], mainText: '' }
   }
 })
@@ -1107,13 +1051,11 @@ ipcMain.handle('get-page-url', async (event, tabId) => {
 ipcMain.handle('execute-action', async (event, action, tabId) => {
   const view = getViewForTab(tabId)
   if (!view) return { success: false, error: 'No browser view' }
-
   try {
     if (action.action === 'navigate') {
       await view.webContents.loadURL(action.url)
       return { success: true }
     }
-
     if (action.action === 'click') {
       const eid = Number(action.elementId)
       const result = await view.webContents.executeJavaScript(`
@@ -1125,7 +1067,6 @@ ipcMain.handle('execute-action', async (event, action, tabId) => {
       `)
       return { success: result, error: result ? null : 'Element [' + eid + '] not found' }
     }
-
     if (action.action === 'type') {
       const eid = Number(action.elementId)
       const text = String(action.text ?? '')
@@ -1133,30 +1074,18 @@ ipcMain.handle('execute-action', async (event, action, tabId) => {
         (function() {
           var el = document.querySelector('[data-ai-id="${eid}"]');
           if (!el) return false;
-
           el.focus();
-
-          if (typeof el.select === 'function') {
-            el.select();
-            return true;
-          }
-
+          if (typeof el.select === 'function') { el.select(); return true; }
           if (el.isContentEditable) {
-            var sel = window.getSelection();
-            var range = document.createRange();
-            range.selectNodeContents(el);
-            sel.removeAllRanges();
-            sel.addRange(range);
+            var sel = window.getSelection(); var range = document.createRange();
+            range.selectNodeContents(el); sel.removeAllRanges(); sel.addRange(range);
             return true;
           }
-
           return true;
         })()
       `)
       if (!focusResult) return { success: false, error: 'Element [' + eid + '] not found' }
-
       await view.webContents.insertText(text)
-
       await view.webContents.executeJavaScript(`
         (function() {
           var active = document.activeElement;
@@ -1164,10 +1093,8 @@ ipcMain.handle('execute-action', async (event, action, tabId) => {
           active.dispatchEvent(new Event('change', { bubbles: true }));
         })()
       `)
-
       return { success: true }
     }
-
     return { success: true }
   } catch (error) {
     return { success: false, error: error.message }
@@ -1178,34 +1105,27 @@ ipcMain.handle('wait-for-load', (event, tabId) => {
   return new Promise((resolve) => {
     const view = getViewForTab(tabId)
     if (!view) return resolve()
-
-    if (!view.webContents.isLoading()) {
-      setTimeout(resolve, 1500)
-      return
-    }
-
+    if (!view.webContents.isLoading()) { setTimeout(resolve, 1500); return }
     const timeout = setTimeout(resolve, 10000)
-
-    view.webContents.once('did-finish-load', () => {
-      clearTimeout(timeout)
-      setTimeout(resolve, 1500)
-    })
+    view.webContents.once('did-finish-load', () => { clearTimeout(timeout); setTimeout(resolve, 1500) })
   })
 })
 
+// ── App Lifecycle ────────────────────────────────────────────────────────────
 app.whenReady().then(() => {
-  createWindow()
+  createWindow(false)
 
   globalShortcut.register('Command+Shift+B', () => {
-    if (mainWindow) {
-      mainWindow.show()
-      mainWindow.focus()
-      mainWindow.webContents.send('open-sidebar')
-    }
+    const win = BrowserWindow.getFocusedWindow() || BrowserWindow.getAllWindows()[0]
+    if (win) { win.show(); win.focus(); win.webContents.send('open-sidebar') }
+  })
+
+  globalShortcut.register('Command+Shift+N', () => {
+    createWindow(true)
   })
 
   app.on('activate', () => {
-    if (BrowserWindow.getAllWindows().length === 0) createWindow()
+    if (BrowserWindow.getAllWindows().length === 0) createWindow(false)
   })
 })
 

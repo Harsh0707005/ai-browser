@@ -14,11 +14,29 @@
 
       <div class="tab-bar" id="tabBar">
         <div class="tab-list" id="tabList"></div>
-        <button class="new-tab-btn" id="newTabBtn" title="New Tab">
+        <button class="new-tab-btn" id="newTabBtn" title="New Tab (right-click for Private Tab)">
           <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
             <path d="M7 2 L7 12 M2 7 L12 7" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
           </svg>
         </button>
+        <!-- Right-click context menu for new tab button -->
+        <div class="new-tab-menu" id="newTabMenu" aria-hidden="true">
+          <button class="new-tab-menu-item" id="newTabMenuItem">New Tab</button>
+          <button class="new-tab-menu-item private" id="newPrivateTabMenuItem">
+            <svg width="12" height="12" viewBox="0 0 16 16" fill="none">
+              <path d="M8 1L2 4v4c0 3.5 2.5 6.5 6 7.5C11.5 14.5 14 11.5 14 8V4L8 1z" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/>
+            </svg>
+            New Private Window
+          </button>
+        </div>
+      </div>
+
+      <!-- Private window banner (shown only in private windows via JS) -->
+      <div class="private-window-banner" id="privateWindowBanner" hidden>
+        <svg width="12" height="12" viewBox="0 0 16 16" fill="none">
+          <path d="M8 1L2 4v4c0 3.5 2.5 6.5 6 7.5C11.5 14.5 14 11.5 14 8V4L8 1z" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/>
+        </svg>
+        Private Window — browsing activity won't be saved
       </div>
 
       <!-- Toolbar -->
@@ -53,11 +71,17 @@
           </svg>
         </button>
         <div class="address-bar-container">
-          <div class="address-bar">
+          <div class="address-bar" id="addressBar">
             <svg class="address-bar-icon" width="16" height="16" viewBox="0 0 16 16" fill="none">
               <circle cx="8" cy="8" r="3" stroke="currentColor" stroke-width="1.5"/>
               <path d="M8 1 L8 3 M8 13 L8 15 M1 8 L3 8 M13 8 L15 8" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
             </svg>
+            <div class="private-badge" id="privateBadge" style="display:none;">
+              <svg width="11" height="11" viewBox="0 0 16 16" fill="none">
+                <path d="M8 1L2 4v4c0 3.5 2.5 6.5 6 7.5C11.5 14.5 14 11.5 14 8V4L8 1z" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/>
+              </svg>
+              Private
+            </div>
             <input 
               type="text" 
               id="addressInput" 
