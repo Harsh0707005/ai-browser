@@ -394,18 +394,19 @@ function openSidebarAndFocus() {
   chatInput.focus()
 }
 
-let lastMetaKeyTime = 0
+let lastModKeyTime = 0
 document.addEventListener('keydown', (e) => {
-  if (e.key === 'Meta') {
+  const isMod = e.key === 'Meta' || e.key === 'Control'
+  if (isMod) {
     const now = Date.now()
-    if (now - lastMetaKeyTime < 400) {
+    if (now - lastModKeyTime < 400) {
       e.preventDefault()
       e.stopPropagation()
-      openSidebarAndFocus()
-      lastMetaKeyTime = 0
+      toggleSidebar()
+      lastModKeyTime = 0
       return
     }
-    lastMetaKeyTime = now
+    lastModKeyTime = now
   }
 })
 
@@ -1185,8 +1186,9 @@ function updateNavigationButtons(canGoBack, canGoForward) {
   forwardBtn.disabled = !canGoForward
 }
 
-function showLoading(show) {
-  loadingIndicator.style.display = show ? 'block' : 'none'
+function showLoading(/* show */) {
+  // Loading indicator disabled — was showing in address bar for no reason
+  if (loadingIndicator) loadingIndicator.style.display = 'none'
 }
 
 if (window.electronAPI) {

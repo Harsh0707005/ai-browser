@@ -373,6 +373,13 @@ body {
   gap: 4px;
 }
 
+.toolbar-right {
+  display: flex;
+  gap: 4px;
+  margin-left: auto;
+  flex-shrink: 0;
+}
+
 .nav-btn {
   width: 36px;
   height: 36px;
