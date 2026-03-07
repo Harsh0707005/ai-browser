@@ -32,7 +32,7 @@ function toolProgressLabel(slug) {
   return 'Running tool'
 }
 
-export async function handlePlan(message, conversationContext, model = 'gemini', clientDateTime, sendProgress = () => {}) {
+export async function handlePlan(message, conversationContext, model = 'gemini', clientDateTime, sendProgress = () => {}, whatsappConnected = false) {
   console.log(`[PLAN] "${message}" (model: ${model})` + (conversationContext ? ' (with context)' : ''))
 
   // ── Keyword pre-routing ──────────────────────────────────────────────────
@@ -58,7 +58,23 @@ export async function handlePlan(message, conversationContext, model = 'gemini',
   }
 
   // ── Build tools block for prompt ─────────────────────────────────────────
-  const serviceGroups = {}
+  // WhatsApp is always exposed as a built-in tool so the LLM treats it like
+  // any other tool and prefers it over browsing — no special-casing needed.
+  const WA_BUILTIN_TOOL = {
+    slug: 'WHATSAPP_SEND_MESSAGE',
+    name: 'Send WhatsApp Message',
+    description: 'Send a WhatsApp message to a contact. Always use this tool for any WhatsApp send request — never browse WhatsApp Web.',
+    parameters: {
+      type: 'object',
+      properties: {
+        phone: { type: 'string', description: 'Recipient phone number with country code, digits only.' },
+        message: { type: 'string', description: 'The message text to send.' },
+      },
+      required: ['phone', 'message'],
+    },
+  }
+
+  const serviceGroups = { WhatsApp: [WA_BUILTIN_TOOL] }
   for (const t of externalTools) {
     if (!serviceGroups[t.serviceLabel]) serviceGroups[t.serviceLabel] = []
     serviceGroups[t.serviceLabel].push({
@@ -69,22 +85,21 @@ export async function handlePlan(message, conversationContext, model = 'gemini',
     })
   }
 
-  const toolsBlock = externalTools.length
-    ? `AVAILABLE EXTERNAL TOOLS:
+  const toolsBlock = `AVAILABLE EXTERNAL TOOLS:
 ${Object.entries(serviceGroups)
   .map(([label, tools]) => `## ${label}\n${JSON.stringify(tools, null, 2)}`)
   .join('\n\n')}
 
-You may call at most ONE of these tools by returning a JSON object with type "tool_call".
+Call a tool by returning: {"type": "tool_call", "tool": "<exact slug>", "arguments": {<valid JSON matching that tool's parameters>}}
+Rules: slug must be exact. Use minimal safe arguments. Don't guess IDs or phone numbers.
 
 `
-    : ''
 
   const activeServiceLabels = Object.keys(serviceGroups)
   const toolUseInstruction = activeServiceLabels.length
     ? `MANDATORY: USE EXTERNAL TOOLS for any request involving ${activeServiceLabels.join(', ')}.
 - You MUST call the matching tool — do NOT browse the web for these services.
-- "create a sheet", "make a doc", "start a meeting" etc. → call the tool, never navigate to a URL.
+- "create a sheet", "make a doc", "start a meeting", "send a whatsapp message" etc. → call the tool, never navigate to a URL.
 - Pick the single best matching tool slug from AVAILABLE EXTERNAL TOOLS.`
     : ''
 
@@ -96,9 +111,11 @@ You may call at most ONE of these tools by returning a JSON object with type "to
     ? `CURRENT DATE/TIME: ${clientDateTime}\nWhen the user uses relative time references (e.g. "in 1 hour", "tomorrow", "next week", "this evening", "after 30 minutes"), resolve them to exact dates/times based on CURRENT DATE/TIME above and use those exact values in tool arguments.\n`
     : ''
 
-  const prompt = `You are an AI browser assistant. Decide: answer directly, call an external tool, or browse the web.
+  const prompt = `You are an AI browser assistant. Decide: call a tool, answer directly, or browse the web.
 ${dateBlock}
 ${toolsBlock}
+${toolUseInstruction}
+
 ${contextBlock}"${message}"
 
 ANSWER DIRECTLY when:
@@ -106,25 +123,12 @@ ANSWER DIRECTLY when:
 - User provides text to summarize, explain, or analyze
 - General knowledge you can confidently answer
 - Follow-ups that don't need new browsing
-
-${toolUseInstruction}
-
-USE BROWSING only when no external tool covers the request:
-- User wants to visit, search, or look something up on a website
-- Request needs live information from a third-party site
-- Price comparisons, product searches, real web data
-- NEVER browse for services listed in AVAILABLE EXTERNAL TOOLS
-
-If answering directly:
 {"type": "direct", "response": "your answer"}
 You may use markdown. For tables use a fenced code block with language "table-json" containing {"columns":[...],"rows":[[...]]}.
 Accuracy rule: never fabricate numbers, prices, names, quotes, or details you don't know.
 
-If calling an external tool:
-{"type": "tool_call", "tool": "<exact slug>", "arguments": {<valid JSON matching that tool's parameters>}}
-Rules: tool must be an exact slug from AVAILABLE EXTERNAL TOOLS. Use minimal safe arguments. Don't guess IDs or emails.
-
-If browsing is needed:
+BROWSE only when no tool covers the request and live web data is needed.
+NEVER browse for any service listed in AVAILABLE EXTERNAL TOOLS.
 {
   "type": "plan",
   "goal": "concise summary",
@@ -136,6 +140,7 @@ If browsing is needed:
 Plan rules: same group = parallel execution; different group = sequential. Max 10 steps. Be specific about actions.
 Set startFromCurrentTab=true only when continuing from current page/prior workflow.
 Do not assume site structure — plan to inspect first, then act.
+
 Respond with ONLY valid JSON.`
 
   let text
@@ -152,6 +157,14 @@ Respond with ONLY valid JSON.`
 
   // ── Tool call loop (supports chained multi-step tool calls) ─────────────
   if (parsed?.type === 'tool_call' && parsed.tool) {
+    // Built-in WhatsApp tool — intercept before Composio
+    if (parsed.tool === 'WHATSAPP_SEND_MESSAGE') {
+      const { phone, name, message: waMsg } = parsed.arguments || {}
+      if (!waMsg) return { success: false, error: 'No message text provided for WhatsApp' }
+      console.log(`[PLAN] WhatsApp send via tool: to=${phone || name}, msg=${waMsg.substring(0, 60)}`)
+      return { success: true, whatsappSend: { phone: phone || null, name: name || null, message: waMsg } }
+    }
+
     if (!isComposioReady()) {
       return { success: false, error: 'Tool calling is not available right now' }
     }
@@ -161,6 +174,12 @@ Respond with ONLY valid JSON.`
     let current = parsed
 
     while (current?.type === 'tool_call' && current.tool && toolHistory.length < MAX_TOOL_CALLS) {
+      // Also intercept WhatsApp if it appears mid-chain
+      if (current.tool === 'WHATSAPP_SEND_MESSAGE') {
+        const { phone, name, message: waMsg } = current.arguments || {}
+        if (waMsg) return { success: true, whatsappSend: { phone: phone || null, name: name || null, message: waMsg } }
+        break
+      }
       sendProgress(toolProgressLabel(current.tool) + '...')
       let toolResult
       try {
@@ -280,6 +299,12 @@ Write a clear, natural answer based only on this data.
     }
 
     return { success: true, direct: true, response: naturalAnswer }
+  }
+
+  // ── WhatsApp send ────────────────────────────────────────────────────────
+  if (parsed?.type === 'whatsapp_send' && parsed.phone && parsed.message) {
+    console.log(`[PLAN] WhatsApp send to ${parsed.phone}: ${parsed.message.substring(0, 60)}`)
+    return { success: true, whatsappSend: { phone: parsed.phone, message: parsed.message } }
   }
 
   // ── Direct answer ────────────────────────────────────────────────────────

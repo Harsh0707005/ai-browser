@@ -13,14 +13,19 @@
     "productName": "AI Browser",
     "electronVersion": "40.2.1",
     "mac": {
-      "target": ["dmg"],
+      "target": [
+        "dmg"
+      ],
       "category": "public.app-category.utilities",
       "identity": "Apple Development: Harsh Master (3Z5VW83D4U)"
     },
     "dmg": {
       "title": "AI-Browser-1.0.0"
     },
-    "files": ["**/*", "!**/node_modules/**/{CHANGELOG.md,README.md,README,readme.md}"]
+    "files": [
+      "**/*",
+      "!**/node_modules/**/{CHANGELOG.md,README.md,README,readme.md}"
+    ]
   },
   "keywords": [],
   "author": "",
@@ -30,5 +35,10 @@
     "@types/node": "^25.2.2",
     "electron": "40.2.1",
     "electron-builder": "^26.7.0"
+  },
+  "dependencies": {
+    "@hapi/boom": "^10.0.1",
+    "baileys": "^7.0.0-rc.9",
+    "qrcode": "^1.5.4"
   }
 }

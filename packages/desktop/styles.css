@@ -1551,3 +1551,193 @@ body {
   font-weight: 500;
 }
 
+/* ── WhatsApp Panel ────────────────────────────────────────────────────────── */
+.wa-panel {
+  flex-shrink: 0;
+  padding: 0 12px 8px;
+}
+
+.wa-card {
+  border-radius: 14px;
+  background: #252526;
+  border: 1px solid #333;
+  overflow: hidden;
+  transition: border-color 0.2s;
+}
+
+/* ── Setup card (disconnected) ── */
+.wa-setup-card {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: 20px 16px 18px;
+  gap: 8px;
+  text-align: center;
+}
+
+.wa-logo-lg {
+  width: 48px;
+  height: 48px;
+  flex-shrink: 0;
+  filter: drop-shadow(0 2px 8px rgba(37, 211, 102, 0.35));
+}
+.wa-logo-lg svg { width: 100%; height: 100%; }
+
+.wa-setup-title {
+  font-size: 14px;
+  font-weight: 600;
+  color: #e0e0e0;
+  letter-spacing: 0.1px;
+}
+
+.wa-setup-desc {
+  font-size: 11.5px;
+  color: #666;
+  line-height: 1.5;
+  max-width: 220px;
+}
+
+.wa-connect-btn {
+  margin-top: 6px;
+  padding: 8px 22px;
+  background: #25D366;
+  color: #fff;
+  border: none;
+  border-radius: 8px;
+  font-size: 12.5px;
+  font-weight: 600;
+  cursor: pointer;
+  font-family: inherit;
+  transition: background 0.15s, opacity 0.15s;
+  letter-spacing: 0.2px;
+}
+.wa-connect-btn:hover { background: #20c45b; }
+.wa-connect-btn:disabled { opacity: 0.5; cursor: default; }
+
+/* ── QR card ── */
+.wa-qr .wa-card {
+  padding: 14px 14px 12px;
+  border-color: rgba(37, 211, 102, 0.2);
+}
+
+.wa-card-header {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  margin-bottom: 12px;
+}
+
+.wa-logo-md {
+  width: 28px;
+  height: 28px;
+  flex-shrink: 0;
+}
+.wa-logo-md svg { width: 100%; height: 100%; }
+
+.wa-card-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: #e0e0e0;
+  letter-spacing: 0.1px;
+}
+
+.wa-qr-wrap {
+  position: relative;
+  display: flex;
+  justify-content: center;
+  margin-bottom: 12px;
+}
+
+.wa-qr-img {
+  width: 160px;
+  height: 160px;
+  border-radius: 10px;
+  display: block;
+  border: 3px solid #fff;
+  box-shadow: 0 0 0 1px rgba(37,211,102,0.3), 0 4px 20px rgba(0,0,0,0.4);
+}
+
+.wa-qr-shimmer {
+  position: absolute;
+  inset: 0;
+  border-radius: 10px;
+  background: linear-gradient(105deg, transparent 40%, rgba(37,211,102,0.12) 50%, transparent 60%);
+  background-size: 200% 100%;
+  animation: wa-shimmer 2.4s ease-in-out infinite;
+  pointer-events: none;
+}
+
+@keyframes wa-shimmer {
+  0% { background-position: 200% 0; }
+  100% { background-position: -200% 0; }
+}
+
+.wa-steps {
+  list-style: none;
+  counter-reset: wa-step;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+
+.wa-steps li {
+  counter-increment: wa-step;
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  font-size: 11px;
+  color: #777;
+  line-height: 1.4;
+}
+
+.wa-steps li::before {
+  content: counter(wa-step);
+  flex-shrink: 0;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: rgba(37, 211, 102, 0.15);
+  color: #25D366;
+  font-size: 10px;
+  font-weight: 700;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin-top: 0.5px;
+}
+
+/* ── Connecting card ── */
+.wa-connecting .wa-card {
+  padding: 14px 14px 14px;
+  border-color: rgba(37, 211, 102, 0.2);
+}
+
+.wa-progress-wrap {
+  height: 3px;
+  background: rgba(37,211,102,0.12);
+  border-radius: 3px;
+  overflow: hidden;
+  margin-bottom: 8px;
+}
+
+.wa-progress-bar {
+  height: 100%;
+  width: 40%;
+  background: linear-gradient(90deg, #25D366, #128C7E);
+  border-radius: 3px;
+  animation: wa-progress 1.6s ease-in-out infinite;
+}
+
+@keyframes wa-progress {
+  0%   { transform: translateX(-100%); }
+  100% { transform: translateX(350%); }
+}
+
+.wa-card-hint {
+  font-size: 11px;
+  color: #555;
+  text-align: center;
+}
+
+

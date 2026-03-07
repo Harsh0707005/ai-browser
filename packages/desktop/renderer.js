@@ -55,6 +55,9 @@ let wsReady = false
 let pendingRequests = {}
 let requestCounter = 0
 
+let waConnected = false
+let pendingWaMessage = null // { phone, message } — queued while connecting
+
 function connectWS() {
   ws = new WebSocket(WS_URL)
 
@@ -944,7 +947,7 @@ async function sendChatMessage() {
 
   try {
     const conversationContext = await getContextForPlan()
-    const planResult = await sendRequest({ type: 'plan', message, conversationContext })
+    const planResult = await sendRequest({ type: 'plan', message, conversationContext, whatsappConnected: waConnected })
 
     removeLastLoading()
 
@@ -952,6 +955,22 @@ async function sendChatMessage() {
     if (!planResult.success) {
       addMessage(planResult.error || 'Failed to process request', 'error')
       setInputEnabled(true)
+      return
+    }
+
+    if (planResult.whatsappSend) {
+      const { phone, message: waMsg } = planResult.whatsappSend
+
+      if (!waConnected) {
+        pendingWaMessage = { phone, message: waMsg }
+        showWaSetupCard()
+        addMessage('WhatsApp isn\'t connected yet. Scan the QR code above — your message will send automatically once connected.', 'assistant')
+        window.electronAPI.whatsappConnect().catch(() => {})
+        setInputEnabled(true)
+        return
+      }
+
+      await sendWaMessage(phone, waMsg)
       return
     }
 
@@ -1590,3 +1609,176 @@ if (window.electronAPI) {
     }
   })
 }
+
+// ── WhatsApp send helpers ──────────────────────────────────────────────────────
+
+async function sendWaMessage(phone, waMsg) {
+  addMessage('Sending WhatsApp message...', 'loading')
+  try {
+    const result = await window.electronAPI.whatsappSendMessage(phone, waMsg)
+    removeLastLoading()
+    if (result.success) {
+      const reply = `WhatsApp message sent to **${phone}**:\n\n"${waMsg}"`
+      conversationHistory.push({ role: 'assistant', content: reply })
+      addMessage(reply, 'assistant')
+    } else {
+      addMessage('Failed to send WhatsApp message: ' + (result.error || 'Unknown error'), 'error')
+    }
+  } catch (e) {
+    removeLastLoading()
+    addMessage('Error sending WhatsApp message: ' + e.message, 'error')
+  }
+  setInputEnabled(true)
+}
+
+// ── WhatsApp Panel ────────────────────────────────────────────────────────────
+const waPanel = document.getElementById('waPanel')
+
+const WA_LOGO_SVG = `<svg viewBox="0 0 48 48" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <circle cx="24" cy="24" r="24" fill="#25D366"/>
+  <path d="M34.6 13.4A14.8 14.8 0 0 0 24 9C16.3 9 10 15.3 10 23c0 2.5.7 5 1.9 7.1L10 39l9.1-2.4c2 1.1 4.3 1.7 6.6 1.7h.1c7.7 0 14-6.3 14-14 0-3.7-1.5-7.3-4.2-9.9zM24 37h-.1c-2.1 0-4.2-.6-6-1.7l-.4-.2-4.3 1.1 1.1-4.2-.3-.4A11.9 11.9 0 0 1 12 23c0-6.6 5.4-12 12-12 3.2 0 6.2 1.2 8.5 3.5 2.2 2.3 3.5 5.3 3.5 8.5 0 6.6-5.4 12-12 12zm6.6-9c-.4-.2-2.1-1-2.4-1.1-.3-.1-.6-.2-.8.2-.3.3-.9 1.1-1.1 1.4-.2.2-.4.3-.8.1-.4-.2-1.6-.6-3-1.9-1.1-1-1.8-2.2-2.1-2.6-.2-.4 0-.6.2-.8l.6-.7c.2-.2.3-.4.4-.6.1-.2 0-.4 0-.6-.1-.2-.8-2-1.1-2.7-.3-.7-.6-.6-.8-.6h-.7c-.3 0-.7.1-1 .4C18 20 17 21 17 23.1c0 2.1 1.5 4.1 1.7 4.4.2.3 3 4.6 7.3 6.4 1 .4 1.8.7 2.4.9 1 .3 1.9.3 2.7.2.8-.1 2.5-1 2.9-2 .4-.9.4-1.7.3-1.9-.2-.2-.4-.3-.7-.5z" fill="white"/>
+</svg>`
+
+function showWaSetupCard() {
+  if (!waPanel) return
+  waPanel.innerHTML = ''
+  waPanel.className = 'wa-panel wa-disconnected'
+  const card = document.createElement('div')
+  card.className = 'wa-card wa-setup-card'
+  const logoWrap = document.createElement('div')
+  logoWrap.className = 'wa-logo-lg'
+  logoWrap.innerHTML = WA_LOGO_SVG
+  const titleEl = document.createElement('div')
+  titleEl.className = 'wa-setup-title'
+  titleEl.textContent = 'WhatsApp'
+  const descEl = document.createElement('div')
+  descEl.className = 'wa-setup-desc'
+  descEl.textContent = 'Connect to send messages directly from the AI assistant.'
+  const connectBtn = document.createElement('button')
+  connectBtn.className = 'wa-connect-btn'
+  connectBtn.textContent = 'Connect WhatsApp'
+  connectBtn.addEventListener('click', async () => {
+    if (!window.electronAPI) return
+    connectBtn.disabled = true
+    connectBtn.textContent = 'Connecting...'
+    renderWaPanel('connecting')
+    await window.electronAPI.whatsappConnect()
+  })
+  card.appendChild(logoWrap)
+  card.appendChild(titleEl)
+  card.appendChild(descEl)
+  card.appendChild(connectBtn)
+  waPanel.appendChild(card)
+}
+
+function renderWaPanel(status, data = {}) {
+  if (!waPanel) return
+  waPanel.innerHTML = ''
+
+  if (status === 'disconnected') {
+    // Hide panel silently — only shown when user explicitly needs WhatsApp
+    waPanel.className = 'wa-panel'
+    return
+  }
+
+  if (status === 'connected') {
+    // Connected — no visible indicator; WhatsApp is just another integration
+    waPanel.className = 'wa-panel'
+    return
+  }
+
+  if (status === 'connecting') {
+    waPanel.className = 'wa-panel wa-connecting'
+    const card = document.createElement('div')
+    card.className = 'wa-card'
+
+    const header = document.createElement('div')
+    header.className = 'wa-card-header'
+    const logoWrap = document.createElement('div')
+    logoWrap.className = 'wa-logo-md'
+    logoWrap.innerHTML = WA_LOGO_SVG
+    const titleEl = document.createElement('span')
+    titleEl.className = 'wa-card-title'
+    titleEl.textContent = 'Connecting...'
+    header.appendChild(logoWrap)
+    header.appendChild(titleEl)
+
+    const progressWrap = document.createElement('div')
+    progressWrap.className = 'wa-progress-wrap'
+    const progressBar = document.createElement('div')
+    progressBar.className = 'wa-progress-bar'
+    progressWrap.appendChild(progressBar)
+
+    const hint = document.createElement('div')
+    hint.className = 'wa-card-hint'
+    hint.textContent = 'Establishing secure connection...'
+
+    card.appendChild(header)
+    card.appendChild(progressWrap)
+    card.appendChild(hint)
+    waPanel.appendChild(card)
+    return
+  }
+
+  if (status === 'qr') {
+    waPanel.className = 'wa-panel wa-qr'
+    const card = document.createElement('div')
+    card.className = 'wa-card'
+
+    const header = document.createElement('div')
+    header.className = 'wa-card-header'
+    const logoWrap = document.createElement('div')
+    logoWrap.className = 'wa-logo-md'
+    logoWrap.innerHTML = WA_LOGO_SVG
+    const titleEl = document.createElement('span')
+    titleEl.className = 'wa-card-title'
+    titleEl.textContent = 'Scan to connect'
+    header.appendChild(logoWrap)
+    header.appendChild(titleEl)
+
+    const qrWrap = document.createElement('div')
+    qrWrap.className = 'wa-qr-wrap'
+    const qrImg = document.createElement('img')
+    qrImg.className = 'wa-qr-img'
+    qrImg.src = data.qrDataUrl || ''
+    qrImg.alt = 'WhatsApp QR Code'
+    const qrShimmer = document.createElement('div')
+    qrShimmer.className = 'wa-qr-shimmer'
+    qrWrap.appendChild(qrImg)
+    qrWrap.appendChild(qrShimmer)
+
+    const steps = document.createElement('ol')
+    steps.className = 'wa-steps'
+    ;['Open WhatsApp on your phone', 'Tap Menu or Settings → Linked Devices', 'Tap Link a Device and scan'].forEach(s => {
+      const li = document.createElement('li')
+      li.textContent = s
+      steps.appendChild(li)
+    })
+
+    card.appendChild(header)
+    card.appendChild(qrWrap)
+    card.appendChild(steps)
+    waPanel.appendChild(card)
+    return
+  }
+
+}
+
+// Init WhatsApp panel
+;(async () => {
+  if (!window.electronAPI) return
+  const status = await window.electronAPI.whatsappGetStatus()
+  waConnected = status.status === 'connected'
+  renderWaPanel(status.status, { phone: status.phone })
+
+  window.electronAPI.onWhatsappStatus(async (data) => {
+    waConnected = data.status === 'connected'
+    renderWaPanel(data.status, data)
+
+    if (data.status === 'connected' && pendingWaMessage) {
+      const { phone, message: waMsg } = pendingWaMessage
+      pendingWaMessage = null
+      await sendWaMessage(phone, waMsg)
+    }
+  })
+})()

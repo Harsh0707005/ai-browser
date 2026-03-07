@@ -61,5 +61,11 @@ contextBridge.exposeInMainWorld('electronAPI', {
   onPrivateWindowMode: (cb) => ipcRenderer.on('private-window-mode', cb),
 
   onShortcutFocusAddressBar: (cb) => ipcRenderer.on('shortcut-focus-address-bar', cb),
-  onShortcutOpenFind: (cb) => ipcRenderer.on('shortcut-open-find', cb)
+  onShortcutOpenFind: (cb) => ipcRenderer.on('shortcut-open-find', cb),
+
+  whatsappGetStatus: () => ipcRenderer.invoke('whatsapp-get-status'),
+  whatsappConnect: () => ipcRenderer.invoke('whatsapp-connect'),
+  whatsappSendMessage: (phone, message) => ipcRenderer.invoke('whatsapp-send-message', phone, message),
+  whatsappDisconnect: () => ipcRenderer.invoke('whatsapp-disconnect'),
+  onWhatsappStatus: (cb) => ipcRenderer.on('whatsapp-status', (event, data) => cb(data))
 })

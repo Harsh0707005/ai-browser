@@ -1318,9 +1318,124 @@ function buildAppMenu() {
   return Menu.buildFromTemplate([])
 }
 
+// ── WhatsApp Service ──────────────────────────────────────────────────────────
+const QRCode = require('qrcode')
+let waSock = null
+let waStatus = 'disconnected' // 'disconnected' | 'qr' | 'connecting' | 'connected'
+let waPhone = null
+
+const waNoopLogger = {
+  level: 'silent',
+  child: () => waNoopLogger,
+  trace: () => {}, debug: () => {}, info: () => {},
+  warn: () => {}, error: () => {}, fatal: () => {}
+}
+
+function waSessionPath() {
+  return path.join(app.getPath('userData'), 'whatsapp-session')
+}
+
+function waSessionExists() {
+  try {
+    const sp = waSessionPath()
+    return fs.existsSync(sp) && fs.readdirSync(sp).length > 0
+  } catch (_) { return false }
+}
+
+function sendWaStatusToAll(data) {
+  BrowserWindow.getAllWindows().forEach(win => {
+    try { if (!win.isDestroyed()) win.webContents.send('whatsapp-status', data) } catch (_) {}
+  })
+}
+
+async function connectWhatsApp() {
+  if (waSock) return
+  try {
+    const { default: makeWASocket, useMultiFileAuthState, DisconnectReason, fetchLatestBaileysVersion } = await import('baileys')
+    const { Boom } = await import('@hapi/boom')
+
+    const { state, saveCreds } = await useMultiFileAuthState(waSessionPath())
+
+    let version = [2, 3000, 1015920675]
+    try { const f = await fetchLatestBaileysVersion(); version = f.version } catch (_) {}
+
+    waSock = makeWASocket({ version, auth: state, printQRInTerminal: false, logger: waNoopLogger })
+
+    waSock.ev.on('creds.update', saveCreds)
+
+    waSock.ev.on('connection.update', async (update) => {
+      const { connection, lastDisconnect, qr } = update
+
+      if (qr) {
+        waStatus = 'qr'
+        try {
+          const qrDataUrl = await QRCode.toDataURL(qr, { width: 220, margin: 2, color: { dark: '#000000', light: '#ffffff' } })
+          sendWaStatusToAll({ status: 'qr', qrDataUrl })
+        } catch (e) { console.error('[WA] QR gen failed:', e.message) }
+      }
+
+      if (connection === 'connecting') {
+        waStatus = 'connecting'
+        sendWaStatusToAll({ status: 'connecting' })
+      }
+
+      if (connection === 'close') {
+        const code = new Boom(lastDisconnect?.error)?.output?.statusCode
+        const loggedOut = code === DisconnectReason.loggedOut
+        waSock = null
+        waStatus = 'disconnected'
+        waPhone = null
+        sendWaStatusToAll({ status: 'disconnected' })
+        if (!loggedOut) setTimeout(connectWhatsApp, 3000)
+      }
+
+      if (connection === 'open') {
+        waStatus = 'connected'
+        const id = waSock.user?.id || ''
+        waPhone = id.split(':')[0] || id.split('@')[0] || ''
+        sendWaStatusToAll({ status: 'connected', phone: waPhone })
+      }
+    })
+  } catch (e) {
+    console.error('[WA] Connect failed:', e.message)
+    waSock = null
+    waStatus = 'disconnected'
+    sendWaStatusToAll({ status: 'disconnected' })
+  }
+}
+
+ipcMain.handle('whatsapp-get-status', () => ({ status: waStatus, phone: waPhone }))
+
+
+ipcMain.handle('whatsapp-connect', async () => {
+  await connectWhatsApp()
+  return { success: true }
+})
+
+ipcMain.handle('whatsapp-send-message', async (_event, phone, message) => {
+  if (!waSock || waStatus !== 'connected') return { success: false, error: 'WhatsApp not connected' }
+  try {
+    const jid = phone.includes('@') ? phone : `${phone}@s.whatsapp.net`
+    await waSock.sendMessage(jid, { text: message })
+    return { success: true }
+  } catch (e) {
+    return { success: false, error: e.message }
+  }
+})
+
+ipcMain.handle('whatsapp-disconnect', async () => {
+  try { if (waSock) { await waSock.logout(); waSock = null } } catch (_) {}
+  waStatus = 'disconnected'
+  waPhone = null
+  try { fs.rmSync(waSessionPath(), { recursive: true, force: true }) } catch (_) {}
+  sendWaStatusToAll({ status: 'disconnected' })
+  return { success: true }
+})
+
 // ── App Lifecycle ────────────────────────────────────────────────────────────
 app.whenReady().then(() => {
   createWindow(false)
+  if (waSessionExists()) connectWhatsApp()
   Menu.setApplicationMenu(buildAppMenu())
 
   // No global shortcuts: shortcuts only work when the browser window is focused
