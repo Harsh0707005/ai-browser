@@ -778,10 +778,10 @@ function wireViewEvents(tabId, view, state) {
         #agent-toast-pill {
           position: fixed; top: 24px; left: 50%; transform: translateX(-50%);
           z-index: 2147483647; padding: 8px 24px; border-radius: 30px;
-          background: linear-gradient(135deg, #6366f1, #8b5cf6); color: white;
+          background: linear-gradient(135deg, #0d9488, #14b8a6); color: white;
           font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
           font-size: 13px; font-weight: 500; letter-spacing: 0.3px;
-          box-shadow: 0 4px 20px rgba(139, 92, 246, 0.4);
+          box-shadow: 0 4px 20px rgba(20, 184, 166, 0.4);
           border: 1px solid rgba(255, 255, 255, 0.2); backdrop-filter: blur(8px);
           pointer-events: none; opacity: 0;
           transition: opacity 0.4s cubic-bezier(0.2, 0.8, 0.2, 1);
@@ -981,7 +981,7 @@ function createWindow(isPrivate = false) {
     },
     titleBarStyle: 'hidden',
     frame: false,
-    backgroundColor: isPrivate ? '#16162a' : '#1e1e1e'
+    backgroundColor: isPrivate ? '#0f172a' : '#1e1e1e'
   })
 
   const state = {

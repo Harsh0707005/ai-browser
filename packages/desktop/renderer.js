@@ -12,6 +12,7 @@ const sidebarCloseBtn = document.getElementById('sidebarCloseBtn')
 const chatInput = document.getElementById('chatInput')
 const chatSendBtn = document.getElementById('chatSendBtn')
 const chatMessages = document.getElementById('chatMessages')
+const chatEmptyState = document.getElementById('chatEmptyState')
 const modelSelect = document.getElementById('modelSelect')
 const tabList = document.getElementById('tabList')
 const newTabBtn = document.getElementById('newTabBtn')
@@ -597,6 +598,38 @@ sidebarResizeHandle.addEventListener('mousedown', (e) => {
   document.addEventListener('mouseup', onUp)
 })
 
+// ── Empty state chip clicks & rotating subtitle ──────────
+;(function initEmptyState() {
+  const sub = document.getElementById('chatEmptySub')
+  const subtitles = [
+    'I can browse, click, fill forms, and automate anything.',
+    'Just describe what you want — I\'ll handle the clicks.',
+    'I remember your logins and contacts so you don\'t have to.',
+    'Multi-tab agent: I open pages and work across them.',
+    'Ask me to research, compare, extract, or book things.',
+    'Think of me as a second pair of hands on the keyboard.',
+  ]
+  let subIdx = 0
+  if (sub) {
+    setInterval(() => {
+      sub.style.opacity = '0'
+      setTimeout(() => {
+        subIdx = (subIdx + 1) % subtitles.length
+        sub.textContent = subtitles[subIdx]
+        sub.style.opacity = '1'
+      }, 300)
+    }, 3500)
+  }
+
+  document.querySelectorAll('.chat-empty-chip').forEach(chip => {
+    chip.addEventListener('click', () => {
+      chatInput.value = chip.dataset.prompt || chip.textContent
+      chatInput.focus()
+      chatInput.dispatchEvent(new Event('input'))
+    })
+  })
+})()
+
 chatInput.addEventListener('keydown', (e) => {
   if (e.key === 'Enter' && !e.shiftKey) {
     e.preventDefault()
@@ -825,6 +858,7 @@ function addMessage(text, type, reference) {
     div.appendChild(tag)
   }
   chatMessages.appendChild(div)
+  if (chatEmptyState) chatEmptyState.classList.add('hidden')
   smoothScrollToBottom()
   return div
 }
@@ -2193,81 +2227,12 @@ function renderWaPanel(status, data = {}) {
     return
   }
 
-  if (status === 'connecting') {
-    waPanel.className = 'wa-panel wa-connecting'
-    const card = document.createElement('div')
-    card.className = 'wa-card'
-
-    const header = document.createElement('div')
-    header.className = 'wa-card-header'
-    const logoWrap = document.createElement('div')
-    logoWrap.className = 'wa-logo-md'
-    logoWrap.innerHTML = WA_LOGO_SVG
-    const titleEl = document.createElement('span')
-    titleEl.className = 'wa-card-title'
-    titleEl.textContent = 'Connecting...'
-    header.appendChild(logoWrap)
-    header.appendChild(titleEl)
-
-    const progressWrap = document.createElement('div')
-    progressWrap.className = 'wa-progress-wrap'
-    const progressBar = document.createElement('div')
-    progressBar.className = 'wa-progress-bar'
-    progressWrap.appendChild(progressBar)
-
-    const hint = document.createElement('div')
-    hint.className = 'wa-card-hint'
-    hint.textContent = 'Establishing secure connection...'
-
-    card.appendChild(header)
-    card.appendChild(progressWrap)
-    card.appendChild(hint)
-    waPanel.appendChild(card)
+  // connecting / qr: keep sidebar silent — no flicker; connection runs in background.
+  // User can see QR/status in Settings → Integrations if they open it.
+  if (status === 'connecting' || status === 'qr') {
+    waPanel.className = 'wa-panel'
     return
   }
-
-  if (status === 'qr') {
-    waPanel.className = 'wa-panel wa-qr'
-    const card = document.createElement('div')
-    card.className = 'wa-card'
-
-    const header = document.createElement('div')
-    header.className = 'wa-card-header'
-    const logoWrap = document.createElement('div')
-    logoWrap.className = 'wa-logo-md'
-    logoWrap.innerHTML = WA_LOGO_SVG
-    const titleEl = document.createElement('span')
-    titleEl.className = 'wa-card-title'
-    titleEl.textContent = 'Scan to connect'
-    header.appendChild(logoWrap)
-    header.appendChild(titleEl)
-
-    const qrWrap = document.createElement('div')
-    qrWrap.className = 'wa-qr-wrap'
-    const qrImg = document.createElement('img')
-    qrImg.className = 'wa-qr-img'
-    qrImg.src = data.qrDataUrl || ''
-    qrImg.alt = 'WhatsApp QR Code'
-    const qrShimmer = document.createElement('div')
-    qrShimmer.className = 'wa-qr-shimmer'
-    qrWrap.appendChild(qrImg)
-    qrWrap.appendChild(qrShimmer)
-
-    const steps = document.createElement('ol')
-    steps.className = 'wa-steps'
-    ;['Open WhatsApp on your phone', 'Tap Menu or Settings → Linked Devices', 'Tap Link a Device and scan'].forEach(s => {
-      const li = document.createElement('li')
-      li.textContent = s
-      steps.appendChild(li)
-    })
-
-    card.appendChild(header)
-    card.appendChild(qrWrap)
-    card.appendChild(steps)
-    waPanel.appendChild(card)
-    return
-  }
-
 }
 
 // Init WhatsApp panel

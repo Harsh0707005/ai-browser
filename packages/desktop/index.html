@@ -125,7 +125,20 @@
         <!-- WhatsApp Panel -->
         <div class="wa-panel" id="waPanel"></div>
 
-        <div class="chat-messages" id="chatMessages"></div>
+        <div class="chat-messages" id="chatMessages">
+          <div class="chat-empty-state" id="chatEmptyState">
+            <h3 class="chat-empty-title">What can I do for you?</h3>
+            <p class="chat-empty-sub" id="chatEmptySub">I can browse, click, fill forms, and automate anything.</p>
+            <div class="chat-empty-chips">
+              <button class="chat-empty-chip" data-prompt="Summarize this page for me">Summarize this page</button>
+              <button class="chat-empty-chip" data-prompt="Find the best price for this product online">Compare prices online</button>
+              <button class="chat-empty-chip" data-prompt="Fill out this form for me">Fill this form</button>
+              <button class="chat-empty-chip" data-prompt="Search for flights from New York to London next week">Search flights</button>
+              <button class="chat-empty-chip" data-prompt="Open YouTube and play lo-fi music">Play lo-fi music</button>
+              <button class="chat-empty-chip" data-prompt="Find and copy all email addresses on this page">Extract emails</button>
+            </div>
+          </div>
+        </div>
         <div class="reference-container" id="referenceContainer"></div>
         <div class="chat-input-container">
           <textarea
