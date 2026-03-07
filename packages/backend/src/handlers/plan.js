@@ -32,7 +32,7 @@ function toolProgressLabel(slug) {
   return 'Running tool'
 }
 
-export async function handlePlan(message, conversationContext, model = 'gemini', clientDateTime, sendProgress = () => {}, whatsappConnected = false) {
+export async function handlePlan(message, conversationContext, model = 'gemini', clientDateTime, sendProgress = () => {}, whatsappConnected = false, contacts = []) {
   console.log(`[PLAN] "${message}" (model: ${model})` + (conversationContext ? ' (with context)' : ''))
 
   // ── Keyword pre-routing ──────────────────────────────────────────────────
@@ -103,6 +103,19 @@ Rules: slug must be exact. Use minimal safe arguments. Don't guess IDs or phone 
 - Pick the single best matching tool slug from AVAILABLE EXTERNAL TOOLS.`
     : ''
 
+  const contactsBlock = contacts && contacts.length > 0
+    ? `SAVED CONTACTS (use these to resolve names to phone/email/address — never ask the user for details already here):
+${contacts.map(c => {
+  const parts = [`Name: ${c.name}`]
+  if (c.phone) parts.push(`Phone: ${c.phone}`)
+  if (c.email) parts.push(`Email: ${c.email}`)
+  if (c.address) parts.push(`Address: ${c.address}`)
+  return parts.join(', ')
+}).join('\n')}
+
+`
+    : ''
+
   const contextBlock = conversationContext && conversationContext.trim()
     ? `PREVIOUS CONVERSATION CONTEXT:\n${conversationContext.trim()}\n\nCURRENT USER MESSAGE: `
     : 'USER REQUEST: '
@@ -112,8 +125,7 @@ Rules: slug must be exact. Use minimal safe arguments. Don't guess IDs or phone 
     : ''
 
   const prompt = `You are an AI browser assistant. Decide: call a tool, answer directly, or browse the web.
-${dateBlock}
-${toolsBlock}
+${dateBlock}${contactsBlock}${toolsBlock}
 ${toolUseInstruction}
 
 ${contextBlock}"${message}"
@@ -237,8 +249,7 @@ Respond with ONLY valid JSON.`
       ).join('\n\n')
 
       const continuePrompt = `You are an AI assistant completing a multi-step task using external tools.
-${dateBlock}
-${toolsBlock}
+${dateBlock}${contactsBlock}${toolsBlock}
 ORIGINAL REQUEST: "${message}"
 
 COMPLETED TOOL CALLS:

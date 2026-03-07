@@ -3,6 +3,40 @@ const path = require('path')
 const fs = require('fs')
 const crypto = require('crypto')
 
+// ── Contacts Storage ─────────────────────────────────────────────────────────
+function contactsPath() {
+  return path.join(app.getPath('userData'), 'contacts.json')
+}
+
+function loadContacts() {
+  try { return JSON.parse(fs.readFileSync(contactsPath(), 'utf8')) } catch { return [] }
+}
+
+function saveContacts(list) {
+  fs.writeFileSync(contactsPath(), JSON.stringify(list, null, 2), 'utf8')
+}
+
+ipcMain.handle('get-all-contacts', () => {
+  return loadContacts()
+})
+
+ipcMain.handle('save-contact', (_event, contact) => {
+  const list = loadContacts()
+  if (!contact.id) contact.id = crypto.randomUUID()
+  const idx = list.findIndex(c => c.id === contact.id)
+  if (idx >= 0) list[idx] = contact
+  else list.push(contact)
+  saveContacts(list)
+  return contact
+})
+
+ipcMain.handle('delete-contact', (_event, contactId) => {
+  const list = loadContacts()
+  const filtered = list.filter(c => c.id !== contactId)
+  saveContacts(filtered)
+  return true
+})
+
 // ── Credential Storage ───────────────────────────────────────────────────────
 function credentialsPath() {
   return path.join(app.getPath('userData'), 'credentials.json')
@@ -1415,7 +1449,8 @@ ipcMain.handle('whatsapp-connect', async () => {
 ipcMain.handle('whatsapp-send-message', async (_event, phone, message) => {
   if (!waSock || waStatus !== 'connected') return { success: false, error: 'WhatsApp not connected' }
   try {
-    const jid = phone.includes('@') ? phone : `${phone}@s.whatsapp.net`
+    const cleanPhone = phone.replace(/[^\d+@]/g, '').replace(/(?!^\+)\+/g, '')
+    const jid = cleanPhone.includes('@') ? cleanPhone : `${cleanPhone}@s.whatsapp.net`
     await waSock.sendMessage(jid, { text: message })
     return { success: true }
   } catch (e) {

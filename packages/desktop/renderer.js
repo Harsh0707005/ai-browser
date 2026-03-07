@@ -21,6 +21,16 @@ const settingsOverlay = document.getElementById('settingsOverlay')
 const settingsCloseBtn = document.getElementById('settingsCloseBtn')
 const savedLoginsList = document.getElementById('savedLoginsList')
 const savedLoginsEmpty = document.getElementById('savedLoginsEmpty')
+const contactsList = document.getElementById('contactsList')
+const contactsEmpty = document.getElementById('contactsEmpty')
+const contactsAddBtn = document.getElementById('contactsAddBtn')
+const contactsAddForm = document.getElementById('contactsAddForm')
+const contactFormName = document.getElementById('contactFormName')
+const contactFormPhone = document.getElementById('contactFormPhone')
+const contactFormEmail = document.getElementById('contactFormEmail')
+const contactFormAddress = document.getElementById('contactFormAddress')
+const contactFormSave = document.getElementById('contactFormSave')
+const contactFormCancel = document.getElementById('contactFormCancel')
 
 const SIDEBAR_MIN_WIDTH = 280
 const SIDEBAR_MAX_WIDTH = 700
@@ -134,11 +144,30 @@ reloadBtn.addEventListener('click', () => { if (window.electronAPI) window.elect
 sidebarToggle.addEventListener('click', () => { toggleSidebar() })
 sidebarCloseBtn.addEventListener('click', () => { toggleSidebar() })
 
+// ── Settings tabs ──────────────────────────────────────────────────────────
+const passwordsSection = document.getElementById('passwordsSection')
+const contactsSection = document.getElementById('contactsSection')
+
+document.querySelectorAll('.settings-tab').forEach(tab => {
+  tab.addEventListener('click', () => {
+    document.querySelectorAll('.settings-tab').forEach(t => t.classList.remove('active'))
+    tab.classList.add('active')
+    const which = tab.dataset.tab
+    if (passwordsSection) passwordsSection.style.display = which === 'passwords' ? 'block' : 'none'
+    if (contactsSection) contactsSection.classList.toggle('contacts-section-hidden', which !== 'contacts')
+    if (which === 'contacts') loadContacts()
+  })
+})
+
 // ── Settings / Saved passwords ─────────────────────────────────────────────
 function openSettings() {
   if (!settingsOverlay) return
   if (window.electronAPI) window.electronAPI.hideBrowserView()
   settingsOverlay.setAttribute('aria-hidden', 'false')
+  // activate passwords tab by default
+  document.querySelectorAll('.settings-tab').forEach(t => t.classList.toggle('active', t.dataset.tab === 'passwords'))
+  if (passwordsSection) passwordsSection.style.display = 'block'
+  if (contactsSection) contactsSection.classList.add('contacts-section-hidden')
   loadSavedLogins()
 }
 
@@ -314,6 +343,205 @@ async function loadSavedLogins() {
       savedLoginsList.appendChild(item)
     }
   }
+}
+
+// ── Contacts ───────────────────────────────────────────────────────────────
+let _contactEditingId = null
+
+async function loadContacts() {
+  if (!contactsList || !contactsEmpty) return
+  if (!window.electronAPI || !window.electronAPI.getAllContacts) {
+    contactsList.innerHTML = ''
+    contactsEmpty.style.display = 'block'
+    return
+  }
+  const contacts = await window.electronAPI.getAllContacts()
+  renderContactsList(contacts)
+}
+
+function renderContactsList(contacts) {
+  if (!contactsList || !contactsEmpty) return
+  contactsList.innerHTML = ''
+  if (!contacts || contacts.length === 0) {
+    contactsEmpty.style.display = 'block'
+    return
+  }
+  contactsEmpty.style.display = 'none'
+  for (const c of contacts) {
+    const item = document.createElement('div')
+    item.className = 'contact-item'
+    item.dataset.contactId = c.id
+
+    // ── View mode ────────────────────────────────────────────────────────
+    const viewWrap = document.createElement('div')
+    viewWrap.className = 'contact-view'
+
+    const avatar = document.createElement('div')
+    avatar.className = 'contact-avatar'
+    avatar.textContent = (c.name || '?').charAt(0).toUpperCase()
+
+    const info = document.createElement('div')
+    info.className = 'contact-info'
+
+    const nameEl = document.createElement('div')
+    nameEl.className = 'contact-name'
+    nameEl.textContent = c.name || ''
+    info.appendChild(nameEl)
+
+    const details = document.createElement('div')
+    details.className = 'contact-details'
+    if (c.phone) {
+      const d = document.createElement('span')
+      d.className = 'contact-detail'
+      d.textContent = c.phone
+      details.appendChild(d)
+    }
+    if (c.email) {
+      const d = document.createElement('span')
+      d.className = 'contact-detail'
+      d.textContent = c.email
+      details.appendChild(d)
+    }
+    if (c.address) {
+      const d = document.createElement('span')
+      d.className = 'contact-detail'
+      d.textContent = c.address
+      details.appendChild(d)
+    }
+    info.appendChild(details)
+
+    const actions = document.createElement('div')
+    actions.className = 'contact-actions'
+
+    const editBtn = document.createElement('button')
+    editBtn.className = 'contact-btn'
+    editBtn.title = 'Edit'
+    editBtn.innerHTML = '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>'
+    editBtn.addEventListener('click', () => {
+      item.classList.add('editing')
+      const inp = item.querySelector('.contact-edit-name')
+      if (inp) inp.focus()
+    })
+
+    const deleteBtn = document.createElement('button')
+    deleteBtn.className = 'contact-btn delete'
+    deleteBtn.title = 'Remove'
+    deleteBtn.innerHTML = '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M3 6h18M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>'
+    deleteBtn.addEventListener('click', async () => {
+      if (!window.electronAPI || !window.electronAPI.deleteContact) return
+      await window.electronAPI.deleteContact(c.id)
+      loadContacts()
+    })
+
+    actions.appendChild(editBtn)
+    actions.appendChild(deleteBtn)
+    viewWrap.appendChild(avatar)
+    viewWrap.appendChild(info)
+    viewWrap.appendChild(actions)
+    item.appendChild(viewWrap)
+
+    // ── Edit mode ────────────────────────────────────────────────────────
+    const editWrap = document.createElement('div')
+    editWrap.className = 'contact-edit'
+
+    const fields = [
+      { key: 'name', label: 'Name', type: 'text', cls: 'contact-edit-name', placeholder: 'Full name' },
+      { key: 'phone', label: 'Phone', type: 'tel', cls: '', placeholder: '+1 234 567 8900' },
+      { key: 'email', label: 'Email', type: 'email', cls: '', placeholder: 'name@example.com' },
+      { key: 'address', label: 'Address', type: 'text', cls: '', placeholder: '123 Main St, City' },
+    ]
+    const editInputs = {}
+    for (const f of fields) {
+      const row = document.createElement('div')
+      row.className = 'contact-form-row'
+      const lab = document.createElement('label')
+      lab.textContent = f.label
+      const inp = document.createElement('input')
+      inp.className = 'contact-form-input' + (f.cls ? ' ' + f.cls : '')
+      inp.type = f.type
+      inp.placeholder = f.placeholder
+      inp.value = c[f.key] || ''
+      row.appendChild(lab)
+      row.appendChild(inp)
+      editWrap.appendChild(row)
+      editInputs[f.key] = inp
+    }
+
+    const editActions = document.createElement('div')
+    editActions.className = 'contact-form-actions'
+
+    const saveEditBtn = document.createElement('button')
+    saveEditBtn.className = 'contact-form-save'
+    saveEditBtn.textContent = 'Save'
+    saveEditBtn.addEventListener('click', async () => {
+      const name = editInputs.name.value.trim()
+      if (!name) { editInputs.name.focus(); return }
+      const updated = { id: c.id, name, phone: editInputs.phone.value.trim(), email: editInputs.email.value.trim(), address: editInputs.address.value.trim() }
+      if (window.electronAPI && window.electronAPI.saveContact) {
+        await window.electronAPI.saveContact(updated)
+        loadContacts()
+      }
+    })
+
+    const cancelEditBtn = document.createElement('button')
+    cancelEditBtn.className = 'contact-form-cancel'
+    cancelEditBtn.textContent = 'Cancel'
+    cancelEditBtn.addEventListener('click', () => { item.classList.remove('editing') })
+
+    editActions.appendChild(saveEditBtn)
+    editActions.appendChild(cancelEditBtn)
+    editWrap.appendChild(editActions)
+    item.appendChild(editWrap)
+
+    contactsList.appendChild(item)
+  }
+}
+
+// Add contact form toggle
+if (contactsAddBtn) {
+  contactsAddBtn.addEventListener('click', () => {
+    if (!contactsAddForm) return
+    const isHidden = contactsAddForm.classList.contains('contacts-form-hidden')
+    contactsAddForm.classList.toggle('contacts-form-hidden', !isHidden)
+    if (isHidden && contactFormName) contactFormName.focus()
+  })
+}
+
+async function submitNewContact() {
+  if (!contactFormName) return
+  const name = contactFormName.value.trim()
+  if (!name) { contactFormName.focus(); return }
+  const contact = {
+    name,
+    phone: contactFormPhone ? contactFormPhone.value.trim() : '',
+    email: contactFormEmail ? contactFormEmail.value.trim() : '',
+    address: contactFormAddress ? contactFormAddress.value.trim() : '',
+  }
+  if (window.electronAPI && window.electronAPI.saveContact) {
+    await window.electronAPI.saveContact(contact)
+    ;[contactFormName, contactFormPhone, contactFormEmail, contactFormAddress].forEach(el => { if (el) el.value = '' })
+    if (contactsAddForm) contactsAddForm.classList.add('contacts-form-hidden')
+    loadContacts()
+  }
+}
+
+if (contactFormSave) contactFormSave.addEventListener('click', submitNewContact)
+if (contactFormCancel) {
+  contactFormCancel.addEventListener('click', () => {
+    if (contactsAddForm) contactsAddForm.classList.add('contacts-form-hidden')
+    ;[contactFormName, contactFormPhone, contactFormEmail, contactFormAddress].forEach(el => { if (el) el.value = '' })
+  })
+}
+if (contactFormName) {
+  contactFormName.addEventListener('keydown', (e) => { if (e.key === 'Enter') submitNewContact() })
+}
+
+// Resolve a contact name to { phone, email } — used by AI message handlers
+async function resolveContactByName(name) {
+  if (!name || !window.electronAPI || !window.electronAPI.getAllContacts) return null
+  const contacts = await window.electronAPI.getAllContacts()
+  const lower = name.toLowerCase()
+  return contacts.find(c => c.name && c.name.toLowerCase().includes(lower)) || null
 }
 
 const toolbarEl = document.querySelector('.toolbar')
@@ -947,7 +1175,8 @@ async function sendChatMessage() {
 
   try {
     const conversationContext = await getContextForPlan()
-    const planResult = await sendRequest({ type: 'plan', message, conversationContext, whatsappConnected: waConnected })
+    const contacts = window.electronAPI && window.electronAPI.getAllContacts ? await window.electronAPI.getAllContacts() : []
+    const planResult = await sendRequest({ type: 'plan', message, conversationContext, whatsappConnected: waConnected, contacts })
 
     removeLastLoading()
 
@@ -959,7 +1188,19 @@ async function sendChatMessage() {
     }
 
     if (planResult.whatsappSend) {
-      const { phone, message: waMsg } = planResult.whatsappSend
+      let { phone, name, message: waMsg } = planResult.whatsappSend
+
+      // Resolve name → phone from saved contacts if phone not supplied
+      if (!phone && name) {
+        const contact = await resolveContactByName(name)
+        if (contact && contact.phone) {
+          phone = contact.phone
+        } else {
+          addMessage(`I couldn't find a phone number for **${name}** in your contacts. Add one in Settings → Contacts.`, 'assistant')
+          setInputEnabled(true)
+          return
+        }
+      }
 
       if (!waConnected) {
         pendingWaMessage = { phone, message: waMsg }

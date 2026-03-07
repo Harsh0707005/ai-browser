@@ -42,6 +42,10 @@ contextBridge.exposeInMainWorld('electronAPI', {
   saveCredential: (domain, credential) => ipcRenderer.invoke('save-domain-credential', domain, credential),
   deleteCredential: (domain, credentialId) => ipcRenderer.invoke('delete-domain-credential', domain, credentialId),
 
+  getAllContacts: () => ipcRenderer.invoke('get-all-contacts'),
+  saveContact: (contact) => ipcRenderer.invoke('save-contact', contact),
+  deleteContact: (contactId) => ipcRenderer.invoke('delete-contact', contactId),
+
   onNavigationStart: (callback) => ipcRenderer.on('navigation-start', callback),
   onNavigationComplete: (callback) => ipcRenderer.on('navigation-complete', (event, data) => callback(data)),
   onNavigationError: (callback) => ipcRenderer.on('navigation-error', (event, data) => callback(data)),

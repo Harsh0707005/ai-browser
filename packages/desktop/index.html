@@ -165,12 +165,44 @@
         </div>
         <div class="settings-tabs">
           <button class="settings-tab active" data-tab="passwords">Saved passwords</button>
+          <button class="settings-tab" data-tab="contacts">Contacts</button>
         </div>
         <div class="settings-content" id="settingsContent">
           <div class="settings-section" id="passwordsSection">
-            <p class="settings-section-desc">Logins saved when you use “Save & Sign In” on sites.</p>
+            <p class="settings-section-desc">Logins saved when you use "Save & Sign In" on sites.</p>
             <div class="saved-logins-list" id="savedLoginsList"></div>
             <p class="settings-empty" id="savedLoginsEmpty">No saved passwords yet.</p>
+          </div>
+          <div class="settings-section contacts-section-hidden" id="contactsSection">
+            <p class="settings-section-desc">People you interact with. The AI uses these to resolve names when sending messages, emails, or finding contacts.</p>
+            <button class="contacts-add-btn" id="contactsAddBtn">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+              Add contact
+            </button>
+            <div class="contacts-add-form contacts-form-hidden" id="contactsAddForm">
+              <div class="contact-form-row">
+                <label>Name <span class="contact-required">*</span></label>
+                <input class="contact-form-input" id="contactFormName" type="text" placeholder="Full name" autocomplete="off" />
+              </div>
+              <div class="contact-form-row">
+                <label>Phone</label>
+                <input class="contact-form-input" id="contactFormPhone" type="tel" placeholder="+1 234 567 8900" autocomplete="off" />
+              </div>
+              <div class="contact-form-row">
+                <label>Email</label>
+                <input class="contact-form-input" id="contactFormEmail" type="email" placeholder="name@example.com" autocomplete="off" />
+              </div>
+              <div class="contact-form-row">
+                <label>Address</label>
+                <input class="contact-form-input" id="contactFormAddress" type="text" placeholder="123 Main St, City" autocomplete="off" />
+              </div>
+              <div class="contact-form-actions">
+                <button class="contact-form-save" id="contactFormSave">Save contact</button>
+                <button class="contact-form-cancel" id="contactFormCancel">Cancel</button>
+              </div>
+            </div>
+            <div class="contacts-list" id="contactsList"></div>
+            <p class="settings-empty" id="contactsEmpty">No contacts yet.</p>
           </div>
         </div>
       </div>
