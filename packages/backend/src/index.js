@@ -8,6 +8,7 @@ import { fileURLToPath } from 'url'
 import { initGemini, initOpenAI, initClaude } from './llm/index.js'
 import { initComposio } from './composio/index.js'
 import { discoverAllToolSlugs } from './composio/discovery.js'
+import { getAllServiceStatuses, initiateServiceConnection, disconnectService } from './composio/connection.js'
 import { handlePlan } from './handlers/plan.js'
 import { handleStep } from './handlers/step.js'
 import { handleSummary } from './handlers/summary.js'
@@ -82,6 +83,21 @@ wss.on('connection', (ws) => {
       if (msg.type === 'summary') {
         const result = await handleSummary(msg)
         ws.send(JSON.stringify({ type: 'summary_result', requestId, ...result }))
+      }
+
+      if (msg.type === 'composio_get_statuses') {
+        const statuses = await getAllServiceStatuses(msg.userId || 'default')
+        ws.send(JSON.stringify({ type: 'composio_statuses_result', requestId, statuses }))
+      }
+
+      if (msg.type === 'composio_connect') {
+        const result = await initiateServiceConnection(msg.serviceKey, msg.userId || 'default')
+        ws.send(JSON.stringify({ type: 'composio_connect_result', requestId, ...result }))
+      }
+
+      if (msg.type === 'composio_disconnect') {
+        await disconnectService(msg.serviceKey, msg.userId || 'default')
+        ws.send(JSON.stringify({ type: 'composio_disconnect_result', requestId, success: true }))
       }
     } catch (error) {
       console.error(`[WS] Error handling ${msg.type}:`, error.message)

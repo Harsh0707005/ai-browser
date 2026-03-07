@@ -1,5 +1,5 @@
-import { getClient } from './client.js'
-import { findServiceByToolSlug } from './services.js'
+import { getClient, isComposioReady } from './client.js'
+import { SERVICES, findServiceByToolSlug } from './services.js'
 
 /**
  * Ensures the user has an active OAuth connection for the service that owns
@@ -96,4 +96,111 @@ export async function ensureToolConnection(toolSlug, userId = 'default', options
   // No auth config found — surface a message without a redirect URL
   console.warn(`[COMPOSIO] No auth config found for ${service.label} (${toolkitSlug})`)
   return { connected: false, redirectUrl: null, serviceLabel: service.label }
+}
+
+/**
+ * Returns connection status for every configured service.
+ * Result: Array of { key, label, connected: bool }
+ */
+export async function getAllServiceStatuses(userId = 'default') {
+  if (!isComposioReady()) return SERVICES.map(s => ({ key: s.key, label: s.label, connected: false }))
+  const client = getClient()
+
+  let activeItems = []
+  try {
+    const all = await client.connectedAccounts.list({ userIds: [userId], statuses: ['ACTIVE'] })
+    activeItems = Array.isArray(all?.items) ? all.items : []
+  } catch (e) {
+    console.error('[COMPOSIO] Failed to list connected accounts:', e.message)
+  }
+
+  return SERVICES.map(s => {
+    const authConfigId = s.authConfigId()
+    const toolkitSlug = s.toolkitSlug().toLowerCase()
+    let connected = false
+
+    if (authConfigId) {
+      connected = activeItems.some(c => c.authConfigId === authConfigId || c.auth_config_id === authConfigId)
+    }
+    if (!connected) {
+      connected = activeItems.some(c => {
+        const tk = (c.toolkit?.slug || c.toolkit?.name || c.appName || c.app || '').toLowerCase()
+        return tk === toolkitSlug || tk.replace(/[^a-z]/g, '') === toolkitSlug.replace(/[^a-z]/g, '')
+      })
+    }
+
+    return { key: s.key, label: s.label, connected }
+  })
+}
+
+/**
+ * Initiates OAuth for a service by key.
+ * Returns { redirectUrl: string|null, serviceLabel: string }
+ */
+export async function initiateServiceConnection(serviceKey, userId = 'default') {
+  const service = SERVICES.find(s => s.key === serviceKey)
+  if (!service) return { redirectUrl: null, serviceLabel: serviceKey }
+
+  const authConfigId = service.authConfigId()
+  const toolkitSlug = service.toolkitSlug()
+  const callbackUrl = process.env[`COMPOSIO_${service.key.toUpperCase()}_CALLBACK_URL`]
+
+  const client = getClient()
+
+  if (authConfigId) {
+    try {
+      const connRequest = await client.connectedAccounts.initiate(
+        userId,
+        authConfigId,
+        callbackUrl ? { callbackUrl } : {}
+      )
+      return { redirectUrl: connRequest.redirectUrl, serviceLabel: service.label }
+    } catch (e) {
+      console.error(`[COMPOSIO] initiate failed for ${service.label}:`, e.message)
+      return { redirectUrl: null, serviceLabel: service.label }
+    }
+  }
+
+  // No authConfigId — look up auth config by toolkit slug
+  for (const slug of [toolkitSlug, toolkitSlug.toLowerCase()]) {
+    try {
+      const authConfigs = await client.authConfigs.list({ toolkitSlug: slug })
+      const config = Array.isArray(authConfigs?.items) ? authConfigs.items[0] : Array.isArray(authConfigs) ? authConfigs[0] : null
+      if (config?.id) {
+        const connRequest = await client.connectedAccounts.initiate(userId, config.id, callbackUrl ? { callbackUrl } : {})
+        return { redirectUrl: connRequest.redirectUrl, serviceLabel: service.label }
+      }
+    } catch (e) {
+      console.error(`[COMPOSIO] Auth config lookup failed for ${slug}:`, e.message)
+    }
+  }
+
+  return { redirectUrl: null, serviceLabel: service.label }
+}
+
+/**
+ * Deletes all active connected accounts for a service by key.
+ */
+export async function disconnectService(serviceKey, userId = 'default') {
+  const service = SERVICES.find(s => s.key === serviceKey)
+  if (!service || !isComposioReady()) return
+
+  const client = getClient()
+  const authConfigId = service.authConfigId()
+  const toolkitSlug = service.toolkitSlug().toLowerCase()
+
+  try {
+    const all = await client.connectedAccounts.list({ userIds: [userId], statuses: ['ACTIVE'] })
+    const items = Array.isArray(all?.items) ? all.items : []
+
+    const toDelete = items.filter(c => {
+      if (authConfigId && (c.authConfigId === authConfigId || c.auth_config_id === authConfigId)) return true
+      const tk = (c.toolkit?.slug || c.toolkit?.name || c.appName || c.app || '').toLowerCase()
+      return tk === toolkitSlug || tk.replace(/[^a-z]/g, '') === toolkitSlug.replace(/[^a-z]/g, '')
+    })
+
+    await Promise.all(toDelete.map(c => client.connectedAccounts.delete(c.id).catch(() => {})))
+  } catch (e) {
+    console.error(`[COMPOSIO] Disconnect failed for ${service.label}:`, e.message)
+  }
 }

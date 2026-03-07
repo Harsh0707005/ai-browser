@@ -147,6 +147,7 @@ sidebarCloseBtn.addEventListener('click', () => { toggleSidebar() })
 // ── Settings tabs ──────────────────────────────────────────────────────────
 const passwordsSection = document.getElementById('passwordsSection')
 const contactsSection = document.getElementById('contactsSection')
+const integrationsSection = document.getElementById('integrationsSection')
 
 document.querySelectorAll('.settings-tab').forEach(tab => {
   tab.addEventListener('click', () => {
@@ -155,20 +156,25 @@ document.querySelectorAll('.settings-tab').forEach(tab => {
     const which = tab.dataset.tab
     if (passwordsSection) passwordsSection.style.display = which === 'passwords' ? 'block' : 'none'
     if (contactsSection) contactsSection.classList.toggle('contacts-section-hidden', which !== 'contacts')
+    if (integrationsSection) integrationsSection.classList.toggle('contacts-section-hidden', which !== 'integrations')
     if (which === 'contacts') loadContacts()
+    if (which === 'integrations') { _intComposioStatuses = null; renderIntegrationsSection() }
   })
 })
 
 // ── Settings / Saved passwords ─────────────────────────────────────────────
-function openSettings() {
+function openSettings(tab) {
   if (!settingsOverlay) return
   if (window.electronAPI) window.electronAPI.hideBrowserView()
   settingsOverlay.setAttribute('aria-hidden', 'false')
-  // activate passwords tab by default
-  document.querySelectorAll('.settings-tab').forEach(t => t.classList.toggle('active', t.dataset.tab === 'passwords'))
-  if (passwordsSection) passwordsSection.style.display = 'block'
-  if (contactsSection) contactsSection.classList.add('contacts-section-hidden')
-  loadSavedLogins()
+  const activeTab = tab || 'passwords'
+  document.querySelectorAll('.settings-tab').forEach(t => t.classList.toggle('active', t.dataset.tab === activeTab))
+  if (passwordsSection) passwordsSection.style.display = activeTab === 'passwords' ? 'block' : 'none'
+  if (contactsSection) contactsSection.classList.toggle('contacts-section-hidden', activeTab !== 'contacts')
+  if (integrationsSection) integrationsSection.classList.toggle('contacts-section-hidden', activeTab !== 'integrations')
+  if (activeTab === 'passwords') loadSavedLogins()
+  if (activeTab === 'contacts') loadContacts()
+  if (activeTab === 'integrations') { _intComposioStatuses = null; renderIntegrationsSection() }
 }
 
 function closeSettings() {
@@ -833,6 +839,16 @@ const SERVICE_ICON_COLORS = {
   'YouTube': '#FF0000',
 }
 
+function getIntegrationIconHtml(serviceLabel) {
+  const key = SERVICE_LABEL_TO_KEY[serviceLabel]
+  const meta = key ? INT_META[key] : null
+  if (meta && meta.iconFile) {
+    const iconSrc = `${INTEGRATION_ICON_BASE}/${meta.iconFile}`
+    return `<img src="${iconSrc}" alt="${meta.label}" class="connection-card-icon-img" />`
+  }
+  return null
+}
+
 function addConnectionCard(serviceLabel, redirectUrl, pendingMessage, pendingContext) {
   const card = document.createElement('div')
   card.className = 'chat-message connection-card'
@@ -843,8 +859,13 @@ function addConnectionCard(serviceLabel, redirectUrl, pendingMessage, pendingCon
 
   const iconEl = document.createElement('div')
   iconEl.className = 'connection-card-icon'
-  iconEl.style.background = SERVICE_ICON_COLORS[serviceLabel] || '#1a73e8'
-  iconEl.textContent = serviceLabel.charAt(0)
+  const iconHtml = getIntegrationIconHtml(serviceLabel)
+  if (iconHtml) {
+    iconEl.innerHTML = iconHtml
+  } else {
+    iconEl.style.background = SERVICE_ICON_COLORS[serviceLabel] || '#1a73e8'
+    iconEl.textContent = serviceLabel.charAt(0)
+  }
 
   const titleEl = document.createElement('div')
   titleEl.className = 'connection-card-title'
@@ -1872,6 +1893,250 @@ async function sendWaMessage(phone, waMsg) {
   setInputEnabled(true)
 }
 
+// ── Integrations Settings Section ─────────────────────────────────────────────
+let _intWaStatus = 'disconnected'
+let _intWaQrUrl = null
+// { key → bool } for Composio services; null = not yet loaded
+let _intComposioStatuses = null
+
+// Icon files live in assets/integrations/ (relative to index.html). Replace these SVGs to change icons.
+const INTEGRATION_ICON_BASE = 'assets/integrations'
+
+const INT_META = {
+  whatsapp: {
+    label: 'WhatsApp',
+    desc: 'Send and receive messages via the AI assistant.',
+    iconFile: 'whatsapp.svg',
+  },
+  calendar: {
+    label: 'Google Calendar',
+    desc: 'Create and manage events, check your schedule.',
+    iconFile: 'google-calendar.svg',
+  },
+  gmail: {
+    label: 'Gmail',
+    desc: 'Read, send, and manage your emails.',
+    iconFile: 'gmail.svg',
+  },
+  docs: {
+    label: 'Google Docs',
+    desc: 'Create, edit, and search documents.',
+    iconFile: 'google-docs.svg',
+  },
+  sheets: {
+    label: 'Google Sheets',
+    desc: 'Read and update spreadsheets.',
+    iconFile: 'google-sheets.svg',
+  },
+  drive: {
+    label: 'Google Drive',
+    desc: 'Find, upload, and manage files.',
+    iconFile: 'google-drive.svg',
+  },
+  meet: {
+    label: 'Google Meet',
+    desc: 'Create and manage video meetings.',
+    iconFile: 'google-meet.svg',
+  },
+  youtube: {
+    label: 'YouTube',
+    desc: 'Search videos, manage playlists and subscriptions.',
+    iconFile: 'youtube.svg',
+  },
+}
+
+// Map backend serviceLabel (e.g. "Google Calendar") to INT_META key for icons
+const SERVICE_LABEL_TO_KEY = {
+  'WhatsApp': 'whatsapp',
+  'Google Calendar': 'calendar',
+  'Gmail': 'gmail',
+  'Google Docs': 'docs',
+  'Google Sheets': 'sheets',
+  'Google Drive': 'drive',
+  'Google Meet': 'meet',
+  'YouTube': 'youtube',
+}
+
+async function renderIntegrationsSection() {
+  const list = document.getElementById('integrationsList')
+  if (!list) return
+  list.innerHTML = '<p class="integration-loading">Loading...</p>'
+
+  // Fetch Composio statuses via WS
+  if (!_intComposioStatuses) {
+    try {
+      const res = await sendRequest({ type: 'composio_get_statuses' })
+      if (res.statuses) {
+        _intComposioStatuses = {}
+        res.statuses.forEach(s => { _intComposioStatuses[s.key] = s.connected })
+      }
+    } catch (e) {
+      _intComposioStatuses = {}
+    }
+  }
+
+  list.innerHTML = ''
+
+  // WhatsApp card (WA-specific logic)
+  list.appendChild(buildIntegrationCard('whatsapp', _intWaStatus === 'connected'))
+
+  // Composio service cards
+  const composioKeys = ['calendar', 'gmail', 'docs', 'sheets', 'drive', 'meet', 'youtube']
+  composioKeys.forEach(key => {
+    const connected = _intComposioStatuses ? !!_intComposioStatuses[key] : false
+    list.appendChild(buildIntegrationCard(key, connected))
+  })
+}
+
+function buildIntegrationCard(key, connected) {
+  const meta = INT_META[key]
+  const card = document.createElement('div')
+  card.className = 'integration-card'
+
+  // Top row
+  const top = document.createElement('div')
+  top.className = 'integration-card-top'
+
+  const logo = document.createElement('div')
+  logo.className = 'integration-logo'
+  const iconSrc = `${INTEGRATION_ICON_BASE}/${meta.iconFile}`
+  logo.innerHTML = `<img src="${iconSrc}" alt="${meta.label}" class="integration-logo-img" />`
+
+  const info = document.createElement('div')
+  info.className = 'integration-info'
+  const nameEl = document.createElement('p')
+  nameEl.className = 'integration-name'
+  nameEl.textContent = meta.label
+  const descEl = document.createElement('p')
+  descEl.className = 'integration-desc'
+  descEl.textContent = meta.desc
+  info.appendChild(nameEl)
+  info.appendChild(descEl)
+
+  // WhatsApp has its own sub-statuses; everything else is boolean
+  let statusLabel, statusClass
+  if (key === 'whatsapp') {
+    const statusMap = { connected: 'Connected', disconnected: 'Disconnected', connecting: 'Connecting...', qr: 'Scan QR' }
+    statusLabel = statusMap[_intWaStatus] || 'Disconnected'
+    statusClass = _intWaStatus === 'connected' ? 'connected' : _intWaStatus === 'disconnected' ? 'disconnected' : 'connecting'
+  } else {
+    statusLabel = connected ? 'Connected' : 'Disconnected'
+    statusClass = connected ? 'connected' : 'disconnected'
+  }
+
+  const statusEl = document.createElement('div')
+  statusEl.className = `integration-status ${statusClass}`
+  statusEl.innerHTML = `<span class="integration-status-dot"></span>${statusLabel}`
+
+  top.appendChild(logo)
+  top.appendChild(info)
+  top.appendChild(statusEl)
+  card.appendChild(top)
+
+  // Actions
+  const actions = document.createElement('div')
+  actions.className = 'integration-actions'
+
+  if (key === 'whatsapp') {
+    if (_intWaStatus === 'connected') {
+      const btn = document.createElement('button')
+      btn.className = 'integration-btn danger'
+      btn.textContent = 'Disconnect'
+      btn.addEventListener('click', async () => {
+        btn.disabled = true
+        btn.textContent = 'Disconnecting...'
+        await window.electronAPI.whatsappDisconnect()
+      })
+      actions.appendChild(btn)
+    } else if (_intWaStatus === 'disconnected') {
+      const btn = document.createElement('button')
+      btn.className = 'integration-btn primary'
+      btn.textContent = 'Connect'
+      btn.addEventListener('click', async () => {
+        btn.disabled = true
+        btn.textContent = 'Connecting...'
+        window.electronAPI.whatsappConnect().catch(() => {})
+      })
+      actions.appendChild(btn)
+    } else {
+      const btn = document.createElement('button')
+      btn.className = 'integration-btn danger'
+      btn.textContent = 'Cancel'
+      btn.addEventListener('click', async () => {
+        btn.disabled = true
+        await window.electronAPI.whatsappDisconnect()
+      })
+      actions.appendChild(btn)
+    }
+  } else if (connected) {
+    const btn = document.createElement('button')
+    btn.className = 'integration-btn danger'
+    btn.textContent = 'Disconnect'
+    btn.addEventListener('click', async () => {
+      btn.disabled = true
+      btn.textContent = 'Disconnecting...'
+      try {
+        await sendRequest({ type: 'composio_disconnect', serviceKey: key })
+        if (_intComposioStatuses) _intComposioStatuses[key] = false
+        card.replaceWith(buildIntegrationCard(key, false))
+      } catch (e) {
+        btn.disabled = false
+        btn.textContent = 'Disconnect'
+      }
+    })
+    actions.appendChild(btn)
+  } else {
+    const btn = document.createElement('button')
+    btn.className = 'integration-btn primary'
+    btn.textContent = 'Connect'
+    btn.addEventListener('click', async () => {
+      btn.disabled = true
+      btn.textContent = 'Connecting...'
+      try {
+        const res = await sendRequest({ type: 'composio_connect', serviceKey: key })
+        if (res.redirectUrl) {
+          window.electronAPI.createTab(res.redirectUrl)
+          closeSettings()
+        } else {
+          btn.disabled = false
+          btn.textContent = 'Connect'
+        }
+      } catch (e) {
+        btn.disabled = false
+        btn.textContent = 'Connect'
+      }
+    })
+    actions.appendChild(btn)
+  }
+
+  if (actions.children.length) card.appendChild(actions)
+
+  // WhatsApp QR / connecting inline area
+  if (key === 'whatsapp') {
+    if (_intWaStatus === 'qr' && _intWaQrUrl) {
+      const qrArea = document.createElement('div')
+      qrArea.className = 'integration-qr-area'
+      const qrImg = document.createElement('img')
+      qrImg.className = 'integration-qr-img'
+      qrImg.src = _intWaQrUrl
+      qrImg.alt = 'WhatsApp QR Code'
+      const qrLabel = document.createElement('p')
+      qrLabel.className = 'integration-qr-label'
+      qrLabel.textContent = 'Open WhatsApp → Settings → Linked Devices → Link a Device'
+      qrArea.appendChild(qrImg)
+      qrArea.appendChild(qrLabel)
+      card.appendChild(qrArea)
+    } else if (_intWaStatus === 'connecting') {
+      const msg = document.createElement('p')
+      msg.className = 'integration-connecting-msg'
+      msg.textContent = 'Connecting to WhatsApp...'
+      card.appendChild(msg)
+    }
+  }
+
+  return card
+}
+
 // ── WhatsApp Panel ────────────────────────────────────────────────────────────
 const waPanel = document.getElementById('waPanel')
 
@@ -2010,11 +2275,18 @@ function renderWaPanel(status, data = {}) {
   if (!window.electronAPI) return
   const status = await window.electronAPI.whatsappGetStatus()
   waConnected = status.status === 'connected'
+  _intWaStatus = status.status
   renderWaPanel(status.status, { phone: status.phone })
 
   window.electronAPI.onWhatsappStatus(async (data) => {
     waConnected = data.status === 'connected'
+    _intWaStatus = data.status
+    _intWaQrUrl = data.qrDataUrl || null
     renderWaPanel(data.status, data)
+
+    // Re-render integrations tab if it's open
+    const activeTab = document.querySelector('.settings-tab.active')
+    if (activeTab && activeTab.dataset.tab === 'integrations') renderIntegrationsSection()
 
     if (data.status === 'connected' && pendingWaMessage) {
       const { phone, message: waMsg } = pendingWaMessage
