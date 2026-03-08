@@ -180,6 +180,7 @@
           <button class="settings-tab active" data-tab="passwords">Saved passwords</button>
           <button class="settings-tab" data-tab="contacts">Contacts</button>
           <button class="settings-tab" data-tab="integrations">Integrations</button>
+          <button class="settings-tab" data-tab="appearance">Appearance</button>
         </div>
         <div class="settings-content" id="settingsContent">
           <div class="settings-section" id="passwordsSection">
@@ -190,6 +191,45 @@
           <div class="settings-section contacts-section-hidden" id="integrationsSection">
             <p class="settings-section-desc">Connect services so the AI can act on your behalf — send messages, access data, and more.</p>
             <div class="integrations-list" id="integrationsList"></div>
+          </div>
+          <div class="settings-section contacts-section-hidden" id="appearanceSection">
+            <p class="settings-section-desc">Choose how the browser chrome is arranged.</p>
+            <div class="layout-picker">
+              <button type="button" class="layout-card" data-layout="sidebar">
+                <svg class="layout-preview" viewBox="0 0 96 64" fill="none" xmlns="http://www.w3.org/2000/svg">
+                  <rect width="96" height="64" rx="6" fill="#1a1a1a"/>
+                  <rect x="0" y="0" width="96" height="8" rx="6" fill="#111"/>
+                  <rect x="0" y="6" width="96" height="2" fill="#111"/>
+                  <rect x="0" y="8" width="28" height="56" fill="#202020"/>
+                  <rect x="1" y="10" width="26" height="6" rx="3" fill="#2d2d2d"/>
+                  <rect x="1" y="18" width="26" height="5" rx="2.5" fill="#2a2a2a"/>
+                  <rect x="1" y="25" width="26" height="5" rx="2.5" fill="#2a2a2a"/>
+                  <rect x="1" y="32" width="26" height="5" rx="2.5" fill="#2a2a2a"/>
+                  <rect x="29" y="8" width="67" height="56" fill="#1e1e1e"/>
+                </svg>
+                <span class="layout-card-name">Sidebar</span>
+                <span class="layout-card-desc">Tabs and controls in a left panel</span>
+              </button>
+              <button type="button" class="layout-card" data-layout="classic">
+                <svg class="layout-preview" viewBox="0 0 96 64" fill="none" xmlns="http://www.w3.org/2000/svg">
+                  <rect width="96" height="64" rx="6" fill="#1a1a1a"/>
+                  <rect x="0" y="0" width="96" height="8" rx="6" fill="#111"/>
+                  <rect x="0" y="6" width="96" height="2" fill="#111"/>
+                  <rect x="0" y="8" width="96" height="10" fill="#202020"/>
+                  <rect x="2" y="10" width="26" height="5" rx="2.5" fill="#2d2d2d"/>
+                  <rect x="30" y="10" width="26" height="5" rx="2.5" fill="#2a2a2a"/>
+                  <rect x="58" y="10" width="26" height="5" rx="2.5" fill="#2a2a2a"/>
+                  <rect x="0" y="18" width="96" height="10" fill="#1e1e1e"/>
+                  <rect x="4" y="20" width="6" height="6" rx="2" fill="#2d2d2d"/>
+                  <rect x="12" y="20" width="6" height="6" rx="2" fill="#2d2d2d"/>
+                  <rect x="20" y="20" width="6" height="6" rx="2" fill="#2d2d2d"/>
+                  <rect x="28" y="20" width="60" height="6" rx="3" fill="#2d2d2d"/>
+                  <rect x="0" y="28" width="96" height="36" fill="#1e1e1e"/>
+                </svg>
+                <span class="layout-card-name">Classic</span>
+                <span class="layout-card-desc">Tabs and address bar along the top</span>
+              </button>
+            </div>
           </div>
           <div class="settings-section contacts-section-hidden" id="contactsSection">
             <p class="settings-section-desc">People you interact with. The AI uses these to resolve names when sending messages, emails, or finding contacts.</p>

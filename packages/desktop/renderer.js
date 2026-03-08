@@ -149,6 +149,7 @@ sidebarCloseBtn.addEventListener('click', () => { toggleSidebar() })
 const passwordsSection = document.getElementById('passwordsSection')
 const contactsSection = document.getElementById('contactsSection')
 const integrationsSection = document.getElementById('integrationsSection')
+const appearanceSection = document.getElementById('appearanceSection')
 
 document.querySelectorAll('.settings-tab').forEach(tab => {
   tab.addEventListener('click', () => {
@@ -158,6 +159,7 @@ document.querySelectorAll('.settings-tab').forEach(tab => {
     if (passwordsSection) passwordsSection.style.display = which === 'passwords' ? 'block' : 'none'
     if (contactsSection) contactsSection.classList.toggle('contacts-section-hidden', which !== 'contacts')
     if (integrationsSection) integrationsSection.classList.toggle('contacts-section-hidden', which !== 'integrations')
+    if (appearanceSection) appearanceSection.classList.toggle('contacts-section-hidden', which !== 'appearance')
     if (which === 'contacts') loadContacts()
     if (which === 'integrations') { _intComposioStatuses = null; renderIntegrationsSection() }
   })
@@ -173,9 +175,11 @@ function openSettings(tab) {
   if (passwordsSection) passwordsSection.style.display = activeTab === 'passwords' ? 'block' : 'none'
   if (contactsSection) contactsSection.classList.toggle('contacts-section-hidden', activeTab !== 'contacts')
   if (integrationsSection) integrationsSection.classList.toggle('contacts-section-hidden', activeTab !== 'integrations')
+  if (appearanceSection) appearanceSection.classList.toggle('contacts-section-hidden', activeTab !== 'appearance')
   if (activeTab === 'passwords') loadSavedLogins()
   if (activeTab === 'contacts') loadContacts()
   if (activeTab === 'integrations') { _intComposioStatuses = null; renderIntegrationsSection() }
+  if (activeTab === 'appearance') syncLayoutPickerSelection()
 }
 
 function closeSettings() {
@@ -183,6 +187,27 @@ function closeSettings() {
   settingsOverlay.setAttribute('aria-hidden', 'true')
   if (window.electronAPI) window.electronAPI.showBrowserView()
 }
+
+// Appearance: layout selection (sidebar vs classic). UI only for now; applying layout is a separate step.
+let preferredLayout = 'classic'
+
+function syncLayoutPickerSelection() {
+  document.querySelectorAll('.layout-card').forEach(card => {
+    card.classList.toggle('active', card.dataset.layout === preferredLayout)
+  })
+}
+
+function setPreferredLayout(layout) {
+  preferredLayout = layout
+  syncLayoutPickerSelection()
+}
+
+document.querySelectorAll('.layout-card').forEach(card => {
+  card.addEventListener('click', () => {
+    const layout = card.dataset.layout
+    if (layout) setPreferredLayout(layout)
+  })
+})
 
 async function loadSavedLogins() {
   if (!savedLoginsList || !savedLoginsEmpty) return
