@@ -1349,7 +1349,42 @@ function getFocusedState() {
 }
 
 function buildAppMenu() {
-  return Menu.buildFromTemplate([])
+  const template = []
+
+  // macOS requires the first menu to be the app menu
+  if (process.platform === 'darwin') {
+    template.push({
+      label: app.name,
+      submenu: [
+        { role: 'about' },
+        { type: 'separator' },
+        { role: 'services' },
+        { type: 'separator' },
+        { role: 'hide' },
+        { role: 'hideOthers' },
+        { role: 'unhide' },
+        { type: 'separator' },
+        { role: 'quit' },
+      ],
+    })
+  }
+
+  template.push({
+    label: 'Edit',
+    submenu: [
+      { role: 'undo' },
+      { role: 'redo' },
+      { type: 'separator' },
+      { role: 'cut' },
+      { role: 'copy' },
+      { role: 'paste' },
+      { role: 'pasteAndMatchStyle' },
+      { role: 'delete' },
+      { role: 'selectAll' },
+    ],
+  })
+
+  return Menu.buildFromTemplate(template)
 }
 
 // ── WhatsApp Service ──────────────────────────────────────────────────────────
