@@ -1878,6 +1878,16 @@ function renderTabs() {
       e.stopPropagation()
       if (window.electronAPI) window.electronAPI.closeTab(tab.id)
     })
+    close.addEventListener('mouseenter', () => {
+      clearTimeout(hoverTabTimer)
+      hoverTabTimer = null
+    })
+    close.addEventListener('mouseleave', () => {
+      if (hoverTabId === tab.id) {
+        clearTimeout(hoverTabTimer)
+        hoverTabTimer = setTimeout(() => showSplitHoverPopup(el, tab.id), 1000)
+      }
+    })
     el.appendChild(close)
 
     el.addEventListener('click', () => {
