@@ -79,5 +79,21 @@ contextBridge.exposeInMainWorld('electronAPI', {
   whatsappConnect: () => ipcRenderer.invoke('whatsapp-connect'),
   whatsappSendMessage: (phone, message) => ipcRenderer.invoke('whatsapp-send-message', phone, message),
   whatsappDisconnect: () => ipcRenderer.invoke('whatsapp-disconnect'),
-  onWhatsappStatus: (cb) => ipcRenderer.on('whatsapp-status', (event, data) => cb(data))
+  onWhatsappStatus: (cb) => ipcRenderer.on('whatsapp-status', (event, data) => cb(data)),
+
+  // Split view
+  applySplitLayout: (opts) => ipcRenderer.invoke('apply-split-layout', opts),
+  removeFromSplit: (tabId) => ipcRenderer.invoke('remove-from-split', tabId),
+  closeSplit: () => ipcRenderer.invoke('close-split'),
+  tabDragStart: () => ipcRenderer.send('tab-drag-start'),
+  tabDragEnd: () => ipcRenderer.send('tab-drag-end'),
+  setActiveSplitPane: (paneId) => ipcRenderer.send('set-active-split-pane', paneId),
+  onSplitLayoutChanged: (cb) => ipcRenderer.on('split-layout-changed', (e, data) => cb(data)),
+  showSplitHoverPopup: (left, top, tabId) => ipcRenderer.send('show-split-hover-popup', { left, top, tabId }),
+  hideSplitHoverPopup: () => ipcRenderer.send('split-hover-popup-close'),
+  onSplitHoverPopupOpened: (cb) => ipcRenderer.on('split-hover-popup-opened', (_e, bounds) => cb(bounds)),
+  onSplitHoverPopupClosed: (cb) => ipcRenderer.on('split-hover-popup-closed', () => cb()),
+  onSplitPopupMouseEnter: (cb) => ipcRenderer.on('split-popup-mouse-enter', () => cb()),
+  onSplitPopupMouseLeave: (cb) => ipcRenderer.on('split-popup-mouse-leave', () => cb()),
+  onDragEdgeUpdated: (cb) => ipcRenderer.on('drag-edge-updated', (e, edge) => cb(edge))
 })

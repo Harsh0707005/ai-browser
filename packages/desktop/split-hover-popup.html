@@ -1,0 +1,104 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Split view</title>
+  <style>
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      padding: 10px;
+      min-width: 230px;
+      background: #252526;
+      border: 1px solid #3a3a3a;
+      border-radius: 10px;
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      box-shadow: 0 8px 32px rgba(0,0,0,0.55);
+    }
+    .split-hover-title {
+      font-size: 10px;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+      color: #666;
+      margin-bottom: 8px;
+      padding: 0 2px;
+    }
+    .split-hover-presets {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 6px;
+      margin-bottom: 6px;
+    }
+    .split-preset-btn {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 5px;
+      padding: 8px 6px;
+      background: #1e1e1e;
+      border: 1px solid #333;
+      border-radius: 8px;
+      cursor: pointer;
+      color: #bbb;
+      font-size: 10px;
+      transition: background 0.12s, border-color 0.12s, color 0.12s;
+    }
+    .split-preset-btn:hover {
+      background: rgba(20, 184, 166, 0.08);
+      border-color: #14b8a6;
+      color: #e0e0e0;
+    }
+    .split-preset-btn svg { color: #14b8a6; flex-shrink: 0; }
+    .split-hover-actions {
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+      margin-top: 4px;
+    }
+    .split-action-btn {
+      width: 100%;
+      padding: 6px 10px;
+      background: transparent;
+      border: 1px solid #333;
+      border-radius: 6px;
+      cursor: pointer;
+      color: #aaa;
+      font-size: 11px;
+      text-align: left;
+      transition: background 0.12s, color 0.12s;
+    }
+    .split-action-btn:hover { background: #2d2d2d; color: #e0e0e0; }
+    .split-action-remove { border-color: rgba(239,68,68,0.3); color: #f87171; }
+    .split-action-remove:hover { background: rgba(239,68,68,0.1); color: #fca5a5; }
+  </style>
+</head>
+<body>
+  <div class="split-hover-title">Split view</div>
+  <div class="split-hover-presets">
+    <button class="split-preset-btn" data-preset="left-right" title="Side by side">
+      <svg width="32" height="22" viewBox="0 0 32 22" fill="none"><rect x="1" y="1" width="13" height="20" rx="2" fill="currentColor" opacity=".85"/><rect x="18" y="1" width="13" height="20" rx="2" fill="currentColor" opacity=".4"/></svg>
+      <span>Side by side</span>
+    </button>
+    <button class="split-preset-btn" data-preset="top-bottom" title="Stack">
+      <svg width="32" height="22" viewBox="0 0 32 22" fill="none"><rect x="1" y="1" width="30" height="9" rx="2" fill="currentColor" opacity=".85"/><rect x="1" y="12" width="30" height="9" rx="2" fill="currentColor" opacity=".4"/></svg>
+      <span>Stacked</span>
+    </button>
+    <button class="split-preset-btn" data-preset="3-cols" title="3 columns">
+      <svg width="32" height="22" viewBox="0 0 32 22" fill="none"><rect x="1" y="1" width="8" height="20" rx="2" fill="currentColor" opacity=".85"/><rect x="12" y="1" width="8" height="20" rx="2" fill="currentColor" opacity=".55"/><rect x="23" y="1" width="8" height="20" rx="2" fill="currentColor" opacity=".3"/></svg>
+      <span>3 Columns</span>
+    </button>
+    <button class="split-preset-btn" data-preset="left-right-split-right" title="Main + split right">
+      <svg width="32" height="22" viewBox="0 0 32 22" fill="none"><rect x="1" y="1" width="14" height="20" rx="2" fill="currentColor" opacity=".85"/><rect x="18" y="1" width="13" height="9" rx="2" fill="currentColor" opacity=".55"/><rect x="18" y="12" width="13" height="9" rx="2" fill="currentColor" opacity=".3"/></svg>
+      <span>Main + Split</span>
+    </button>
+    <button class="split-preset-btn" data-preset="2x2" title="4 quadrants">
+      <svg width="32" height="22" viewBox="0 0 32 22" fill="none"><rect x="1" y="1" width="13" height="9" rx="2" fill="currentColor" opacity=".85"/><rect x="18" y="1" width="13" height="9" rx="2" fill="currentColor" opacity=".6"/><rect x="1" y="12" width="13" height="9" rx="2" fill="currentColor" opacity=".4"/><rect x="18" y="12" width="13" height="9" rx="2" fill="currentColor" opacity=".2"/></svg>
+      <span>Quad</span>
+    </button>
+  </div>
+  <div class="split-hover-actions" id="splitHoverActions"></div>
+  <script src="split-hover-popup-renderer.js"></script>
+</body>
+</html>

@@ -1,4 +1,4 @@
-const { app, BrowserWindow, BrowserView, ipcMain, session, Menu } = require('electron/main')
+const { app, BrowserWindow, BrowserView, ipcMain, session, Menu, screen } = require('electron/main')
 const path = require('path')
 const fs = require('fs')
 const crypto = require('crypto')
@@ -647,28 +647,79 @@ async function doCredVerify(tabId, view, state) {
   }
 }
 
+const SPLIT_GAP = 2  // px gap between split panes (shows window background)
+
 // ── Layout ───────────────────────────────────────────────────────────────────
 function updateBrowserViewBounds(state) {
-  const view = getActiveView(state)
-  if (!state?.win || !view) return
-  if (state.addressModalOpen) {
-    view.setBounds({ x: 0, y: 0, width: 0, height: 0 })
-    return
-  }
+  if (!state?.win) return
+
   const bounds = state.win.getContentBounds()
   const reserved = state.sidebarOpen ? state.sidebarWidth : 0
   const leftChrome = state.leftChromeWidth || 0
-  const tab = allTabs.get(state.activeTabId)
-  const borderWidth = tab?.isAgent ? 6 : 0
   const findBarH = state.findBarOpen ? FIND_BAR_HEIGHT : 0
   const contentTop = (state.contentTop ?? 128) + findBarH
 
-  view.setBounds({
-    x: leftChrome + borderWidth,
-    y: contentTop + borderWidth,
-    width: bounds.width - leftChrome - reserved - borderWidth * 2,
-    height: bounds.height - contentTop - borderWidth * 2
-  })
+  const cx = leftChrome
+  const cy = contentTop
+  const cw = bounds.width - leftChrome - reserved
+  const ch = bounds.height - contentTop
+
+  // Show split view only when active tab is in the split group; otherwise single view
+  const activeTabInSplit = state.splitLayout && state.splitLayout.panes.some(p => p.tabId === state.activeTabId)
+  if (state.splitLayout && state.splitLayout.panes.length > 1 && activeTabInSplit) {
+    // Hide browser views when address modal is open
+    if (state.addressModalOpen) {
+      for (const pane of state.splitLayout.panes) {
+        const tab = allTabs.get(pane.tabId)
+        if (tab?.view) try { tab.view.setBounds({ x: 0, y: 0, width: 0, height: 0 }) } catch (_) {}
+      }
+      return
+    }
+
+    // Remove any attached views that are no longer in the split
+    const splitTabIds = new Set(state.splitLayout.panes.map(p => p.tabId))
+    for (const view of state.win.getBrowserViews()) {
+      let tid = null
+      for (const [id, t] of allTabs) { if (t.view === view && t.winId === state.win.id) { tid = id; break } }
+      if (tid === null || !splitTabIds.has(tid)) {
+        try { state.win.removeBrowserView(view) } catch (_) {}
+      }
+    }
+
+    for (const pane of state.splitLayout.panes) {
+      const tab = allTabs.get(pane.tabId)
+      if (!tab?.view) continue
+      const x = Math.round(cx + pane.fx * cw)
+      const y = Math.round(cy + pane.fy * ch)
+      const w = Math.max(100, Math.round(pane.fw * cw) - SPLIT_GAP)
+      const h = Math.max(50,  Math.round(pane.fh * ch) - SPLIT_GAP)
+      if (!state.win.getBrowserViews().includes(tab.view)) {
+        try { state.win.addBrowserView(tab.view) } catch (_) {}
+      }
+      tab.view.setBounds({ x, y, width: w, height: h })
+    }
+  } else {
+    // ── Single-view mode (no split, or active tab is not in the split group) ─
+    const activeView = getActiveView(state)
+    for (const view of state.win.getBrowserViews()) {
+      if (view !== activeView) try { state.win.removeBrowserView(view) } catch (_) {}
+    }
+
+    const view = getActiveView(state)
+    if (!view) return
+    if (state.addressModalOpen) {
+      view.setBounds({ x: 0, y: 0, width: 0, height: 0 })
+      return
+    }
+    const tab = allTabs.get(state.activeTabId)
+    const borderWidth = tab?.isAgent ? 6 : 0
+    view.setBounds({
+      x: cx + borderWidth,
+      y: cy + borderWidth,
+      width: cw - borderWidth * 2,
+      height: ch - borderWidth * 2
+    })
+  }
 }
 
 function sendTabsUpdate(state) {
@@ -947,6 +998,18 @@ function wireViewEvents(tabId, view, state) {
     const tab = allTabs.get(tabId)
     if (tab) { tab.title = title; sendTabsUpdate(state) }
   })
+
+  // When user clicks inside a split pane's BrowserView, make that pane active
+  view.webContents.on('focus', () => {
+    if (!state.splitLayout) return
+    const pane = state.splitLayout.panes.find(p => p.tabId === tabId)
+    if (pane && pane.paneId !== state.splitLayout.activePaneId) {
+      state.splitLayout.activePaneId = pane.paneId
+      state.activeTabId = tabId
+      sendSplitLayoutUpdate(state)
+      sendTabsUpdate(state)
+    }
+  })
 }
 
 // ── Tab Management ───────────────────────────────────────────────────────────
@@ -974,8 +1037,56 @@ function createTab(url, options = {}, state) {
   return tabId
 }
 
+function focusActiveView(state) {
+  const view = getActiveView(state)
+  if (view?.webContents && !view.webContents.isDestroyed()) {
+    try { view.webContents.focus() } catch (_) {}
+  }
+}
+
 function switchTab(tabId, state) {
   if (!state.tabIds.has(tabId) || !state.win) return
+
+  if (state.splitLayout) {
+    const paneForTab = state.splitLayout.panes.find(p => p.tabId === tabId)
+    if (paneForTab) {
+      // Switching to a tab that's in the split group: show split view with this pane active
+      state.splitLayout.activePaneId = paneForTab.paneId
+      state.activeTabId = tabId
+      const tab = allTabs.get(tabId)
+      if (tab) sendContentBackground(state, tab.view)
+      updateBrowserViewBounds(state)
+      sendTabsUpdate(state)
+      sendSplitLayoutUpdate(state)
+      state.win.webContents.send('url-changed', {
+        url: tab?.view.webContents.getURL() || tab?.url || '',
+        canGoBack: tab?.view.webContents.canGoBack() || false,
+        canGoForward: tab?.view.webContents.canGoForward() || false
+      })
+      focusActiveView(state)
+      return
+    }
+    // Switching to a tab that's not in the split: show that tab as single view, keep split group
+    state.activeTabId = tabId
+    for (const view of state.win.getBrowserViews()) {
+      try { state.win.removeBrowserView(view) } catch (_) {}
+    }
+    const tab = allTabs.get(tabId)
+    if (tab) {
+      state.win.addBrowserView(tab.view)
+      sendContentBackground(state, tab.view)
+    }
+    updateBrowserViewBounds(state)
+    sendTabsUpdate(state)
+    sendSplitLayoutUpdate(state)
+    state.win.webContents.send('url-changed', {
+      url: tab?.view.webContents.getURL() || tab?.url || '',
+      canGoBack: tab?.view.webContents.canGoBack() || false,
+      canGoForward: tab?.view.webContents.canGoForward() || false
+    })
+    focusActiveView(state)
+    return
+  }
 
   if (state.activeTabId && state.tabIds.has(state.activeTabId)) {
     const prevTab = allTabs.get(state.activeTabId)
@@ -996,6 +1107,7 @@ function switchTab(tabId, state) {
     canGoBack: tab?.view.webContents.canGoBack() || false,
     canGoForward: tab?.view.webContents.canGoForward() || false
   })
+  focusActiveView(state)
 }
 
 const MAX_CLOSED_TABS = 15
@@ -1015,10 +1127,40 @@ function closeTab(tabId, state) {
   }
   state.tabIds.delete(tabId)
 
+  // If this tab was in the split group, remove it from panes; exit split if only 1 remains
+  if (state.splitLayout) {
+    const remaining = state.splitLayout.panes.filter(p => p.tabId !== tabId)
+    if (remaining.length <= 1) {
+      state.win.getBrowserViews().forEach(v => { try { state.win.removeBrowserView(v) } catch (_) {} })
+      state.splitLayout = null
+      const keepTabId = remaining[0]?.tabId
+      if (keepTabId != null) {
+        state.activeTabId = keepTabId
+        const keepTab = allTabs.get(keepTabId)
+        if (keepTab) {
+          state.win.addBrowserView(keepTab.view)
+          state.win.webContents.send('url-changed', {
+            url: keepTab.view.webContents.getURL() || keepTab.url || '',
+            canGoBack: keepTab.view.webContents.canGoBack() || false,
+            canGoForward: keepTab.view.webContents.canGoForward() || false
+          })
+        }
+      }
+    } else {
+      state.splitLayout.panes = redistributeEvenly(remaining)
+      if (!state.splitLayout.panes.find(p => p.paneId === state.splitLayout.activePaneId)) {
+        state.splitLayout.activePaneId = state.splitLayout.panes[0].paneId
+        state.activeTabId = state.splitLayout.panes[0].tabId
+      }
+    }
+    updateBrowserViewBounds(state)
+    sendTabsUpdate(state)
+    sendSplitLayoutUpdate(state)
+  }
+
   if (state.tabIds.size === 0) {
     state.activeTabId = null
     if (state.isPrivate) {
-      // Close private window when last tab closes
       state.win.close()
     } else {
       createTab('https://www.google.com', {}, state)
@@ -1064,7 +1206,9 @@ function createWindow(isPrivate = false) {
     addressModalOpen: false,
     pendingCredVerifyTabId: null,
     closedTabs: [], // last 15 closed tabs for reopen (url, title)
-    lastModKeyTime: 0
+    lastModKeyTime: 0,
+    splitLayout: null,   // { panes: [{paneId, tabId, fx, fy, fw, fh}], activePaneId } or null
+    tabDragging: false   // true while a tab is being dragged (BrowserViews hidden)
   }
   winStates.set(win.id, state)
 
@@ -1104,7 +1248,9 @@ function createWindow(isPrivate = false) {
 // ── IPC: Tabs ────────────────────────────────────────────────────────────────
 ipcMain.on('create-tab', (event, url) => {
   const state = stateForEvent(event)
-  if (state) createTab(url || undefined, { isPrivate: state.isPrivate }, state)
+  if (!state) return
+  // New tab opens as single tab; split group is preserved (switchTab will show single view)
+  createTab(url || undefined, { isPrivate: state.isPrivate }, state)
 })
 
 ipcMain.on('create-private-window', () => {
@@ -1653,6 +1799,425 @@ ipcMain.handle('whatsapp-disconnect', async () => {
   try { fs.rmSync(waSessionPath(), { recursive: true, force: true }) } catch (_) {}
   sendWaStatusToAll({ status: 'disconnected' })
   return { success: true }
+})
+
+// ── Split View ───────────────────────────────────────────────────────────────
+let _splitPaneCounter = 0
+function newPaneId() { return `sp${++_splitPaneCounter}` }
+
+function sendSplitLayoutUpdate(state) {
+  if (!state?.win) return
+  state.win.webContents.send('split-layout-changed', state.splitLayout)
+}
+
+// Redistribute N remaining panes into equal-sized slots.
+// Detects if panes are in a row (columns layout), a column (rows layout), or mixed (grid).
+function redistributeEvenly(panes) {
+  const n = panes.length
+  if (n === 0) return panes
+  if (n === 1) return [{ ...panes[0], fx: 0, fy: 0, fw: 1, fh: 1 }]
+
+  const EPS = 0.02
+  const allSameY = panes.every(p => Math.abs(p.fy - panes[0].fy) < EPS && Math.abs(p.fh - panes[0].fh) < EPS)
+  const allSameX = panes.every(p => Math.abs(p.fx - panes[0].fx) < EPS && Math.abs(p.fw - panes[0].fw) < EPS)
+
+  if (allSameY) {
+    // Pure column layout → equal-width columns
+    return panes.map((p, i) => ({ ...p, fx: i / n, fy: 0, fw: 1 / n, fh: 1 }))
+  }
+  if (allSameX) {
+    // Pure row layout → equal-height rows
+    return panes.map((p, i) => ({ ...p, fx: 0, fy: i / n, fw: 1, fh: 1 / n }))
+  }
+  // Mixed (e.g. grid) → distribute as equal columns (simplest legible result)
+  return panes.map((p, i) => ({ ...p, fx: i / n, fy: 0, fw: 1 / n, fh: 1 }))
+}
+
+// Build fractional pane list for a simple 2-pane split
+function buildTwoPaneSplit(tabA, tabB, side) {
+  const id1 = newPaneId(), id2 = newPaneId()
+  if (side === 'left')   return [{ paneId: id1, tabId: tabA, fx: 0,   fy: 0,   fw: 0.5, fh: 1   }, { paneId: id2, tabId: tabB, fx: 0.5, fy: 0,   fw: 0.5, fh: 1   }]
+  if (side === 'right')  return [{ paneId: id1, tabId: tabB, fx: 0,   fy: 0,   fw: 0.5, fh: 1   }, { paneId: id2, tabId: tabA, fx: 0.5, fy: 0,   fw: 0.5, fh: 1   }]
+  if (side === 'top')    return [{ paneId: id1, tabId: tabA, fx: 0,   fy: 0,   fw: 1,   fh: 0.5 }, { paneId: id2, tabId: tabB, fx: 0,   fy: 0.5, fw: 1,   fh: 0.5 }]
+  if (side === 'bottom') return [{ paneId: id1, tabId: tabB, fx: 0,   fy: 0,   fw: 1,   fh: 0.5 }, { paneId: id2, tabId: tabA, fx: 0,   fy: 0.5, fw: 1,   fh: 0.5 }]
+  return null
+}
+
+// Pick the pane on the given edge for "add to split" (drag tab onto left/right/top/bottom zone)
+function pickPaneIdForSide(splitLayout, side) {
+  if (!splitLayout?.panes?.length) return null
+  const panes = splitLayout.panes
+  if (side === 'left') return panes.reduce((a, p) => (p.fx < a.fx ? p : a), panes[0])
+  if (side === 'right') return panes.reduce((a, p) => (p.fx + p.fw > a.fx + a.fw ? p : a), panes[0])
+  if (side === 'top') return panes.reduce((a, p) => (p.fy < a.fy ? p : a), panes[0])
+  if (side === 'bottom') return panes.reduce((a, p) => (p.fy + p.fh > a.fy + a.fh ? p : a), panes[0])
+  return null
+}
+
+// Build 2x2 panes with sourceTabId in the given quadrant
+function build2x2WithQuadrant(sourceTabId, quadrant, state) {
+  const available = [...state.tabIds]
+  const ordered = [sourceTabId, ...available.filter(id => id !== sourceTabId)]
+  while (ordered.length < 4) ordered.push(ordered[ordered.length - 1])
+  const q = ['top-left', 'top-right', 'bottom-left', 'bottom-right'].indexOf(quadrant)
+  if (q < 0) return null
+  const arr = ordered.slice(0, 4)
+  const idx = arr.indexOf(sourceTabId)
+  if (idx !== q) { const t = arr[idx]; arr[idx] = arr[q]; arr[q] = t }
+  return [
+    { paneId: newPaneId(), tabId: arr[0], fx: 0,   fy: 0,   fw: 0.5, fh: 0.5 },
+    { paneId: newPaneId(), tabId: arr[1], fx: 0.5, fy: 0,   fw: 0.5, fh: 0.5 },
+    { paneId: newPaneId(), tabId: arr[2], fx: 0,   fy: 0.5, fw: 0.5, fh: 0.5 },
+    { paneId: newPaneId(), tabId: arr[3], fx: 0.5, fy: 0.5, fw: 0.5, fh: 0.5 }
+  ]
+}
+
+ipcMain.handle('apply-split-layout', (event, { sourceTabId, side, targetPaneId, preset }) => {
+  const state = stateForEvent(event) || splitHoverPopupOwnerState
+  if (!state) return
+  state.tabDragging = false  // drag / popup closed; unblock updateBrowserViewBounds
+  const interval = _dragIntervals.get(state.win?.id)
+  if (interval) { clearInterval(interval); _dragIntervals.delete(state.win.id) }
+  clearPreviewInViews(state)
+
+  // Drag-drop zones 3-rows / 3-cols → treat as preset
+  let effectivePreset = preset
+  let effectiveSide = side
+  if (!effectivePreset && (side === '3-rows' || side === '3-cols')) {
+    effectivePreset = side
+    effectiveSide = null
+  }
+
+  // ── Preset template (from hover-popup or drag 3-rows/3-cols) ──────────────
+  if (effectivePreset) {
+    const available = [...state.tabIds]
+    const ordered = [sourceTabId, ...available.filter(id => id !== sourceTabId)]
+    const ensure = (n) => { while (ordered.length < n) ordered.push(ordered[ordered.length - 1]) }
+    let panes
+    if (effectivePreset === 'left-right') {
+      ensure(2)
+      panes = buildTwoPaneSplit(ordered[0], ordered[1], 'left')
+    } else if (effectivePreset === 'top-bottom') {
+      ensure(2)
+      panes = buildTwoPaneSplit(ordered[0], ordered[1], 'top')
+    } else if (effectivePreset === '3-cols') {
+      ensure(3)
+      panes = [
+        { paneId: newPaneId(), tabId: ordered[0], fx: 0,       fy: 0, fw: 1/3, fh: 1 },
+        { paneId: newPaneId(), tabId: ordered[1], fx: 1/3,     fy: 0, fw: 1/3, fh: 1 },
+        { paneId: newPaneId(), tabId: ordered[2], fx: 2/3,     fy: 0, fw: 1/3, fh: 1 }
+      ]
+    } else if (effectivePreset === 'left-right-split-right') {
+      ensure(3)
+      panes = [
+        { paneId: newPaneId(), tabId: ordered[0], fx: 0,   fy: 0,   fw: 0.5, fh: 1   },
+        { paneId: newPaneId(), tabId: ordered[1], fx: 0.5, fy: 0,   fw: 0.5, fh: 0.5 },
+        { paneId: newPaneId(), tabId: ordered[2], fx: 0.5, fy: 0.5, fw: 0.5, fh: 0.5 }
+      ]
+    } else if (effectivePreset === '3-rows') {
+      ensure(3)
+      panes = [
+        { paneId: newPaneId(), tabId: ordered[0], fx: 0, fy: 0,     fw: 1, fh: 1/3 },
+        { paneId: newPaneId(), tabId: ordered[1], fx: 0, fy: 1/3,   fw: 1, fh: 1/3 },
+        { paneId: newPaneId(), tabId: ordered[2], fx: 0, fy: 2/3,   fw: 1, fh: 1/3 }
+      ]
+    } else if (effectivePreset === '2x2') {
+      ensure(4)
+      panes = [
+        { paneId: newPaneId(), tabId: ordered[0], fx: 0,   fy: 0,   fw: 0.5, fh: 0.5 },
+        { paneId: newPaneId(), tabId: ordered[1], fx: 0.5, fy: 0,   fw: 0.5, fh: 0.5 },
+        { paneId: newPaneId(), tabId: ordered[2], fx: 0,   fy: 0.5, fw: 0.5, fh: 0.5 },
+        { paneId: newPaneId(), tabId: ordered[3], fx: 0.5, fy: 0.5, fw: 0.5, fh: 0.5 }
+      ]
+    } else return
+    if (!panes) return
+    // Remove all existing views so we start clean
+    state.win.getBrowserViews().forEach(v => { try { state.win.removeBrowserView(v) } catch (_) {} })
+    state.splitLayout = { panes, activePaneId: panes[0].paneId }
+    state.activeTabId = panes[0].tabId
+    updateBrowserViewBounds(state)
+    sendTabsUpdate(state)
+    sendSplitLayoutUpdate(state)
+    return
+  }
+
+  // ── Drag-drop split ───────────────────────────────────────────────────────
+  if (!effectiveSide) return
+
+  const quadrantSides = ['top-left', 'top-right', 'bottom-left', 'bottom-right']
+  if (quadrantSides.includes(effectiveSide)) {
+    const panes = build2x2WithQuadrant(sourceTabId, effectiveSide, state)
+    if (!panes) return
+    state.win.getBrowserViews().forEach(v => { try { state.win.removeBrowserView(v) } catch (_) {} })
+    state.splitLayout = { panes, activePaneId: panes[0].paneId }
+    state.activeTabId = sourceTabId
+    updateBrowserViewBounds(state)
+    sendTabsUpdate(state)
+    sendSplitLayoutUpdate(state)
+    return
+  }
+
+  // When split exists but no targetPaneId, pick the pane on the dropped edge (add tab there, VSCode-style)
+  let effectiveTargetPaneId = targetPaneId
+  if (state.splitLayout && !effectiveTargetPaneId && quadrantSides.indexOf(effectiveSide) < 0) {
+    const edgePane = pickPaneIdForSide(state.splitLayout, effectiveSide)
+    if (edgePane) effectiveTargetPaneId = edgePane.paneId
+  }
+
+  if (!state.splitLayout) {
+    // No split yet: fresh 2-pane with current tab (left/right/top/bottom)
+    const currentTabId = state.activeTabId
+    const panes = buildTwoPaneSplit(sourceTabId, currentTabId, effectiveSide)
+    if (!panes) return
+    state.win.getBrowserViews().forEach(v => { try { state.win.removeBrowserView(v) } catch (_) {} })
+    state.splitLayout = { panes, activePaneId: panes.find(p => p.tabId === sourceTabId)?.paneId || panes[0].paneId }
+    state.activeTabId = sourceTabId
+  } else {
+    // Add to split: sub-split the pane on that edge so the dragged tab becomes a new pane
+    const targetPane = state.splitLayout.panes.find(p => p.paneId === effectiveTargetPaneId)
+    if (!targetPane) return
+    const newId = newPaneId()
+    const { fx, fy, fw, fh } = targetPane
+    if (effectiveSide === 'left') {
+      state.splitLayout.panes.push({ paneId: newId, tabId: sourceTabId, fx, fy, fw: fw / 2, fh })
+      targetPane.fx += fw / 2; targetPane.fw = fw / 2
+    } else if (effectiveSide === 'right') {
+      state.splitLayout.panes.push({ paneId: newId, tabId: sourceTabId, fx: fx + fw / 2, fy, fw: fw / 2, fh })
+      targetPane.fw = fw / 2
+    } else if (effectiveSide === 'top') {
+      state.splitLayout.panes.push({ paneId: newId, tabId: sourceTabId, fx, fy, fw, fh: fh / 2 })
+      targetPane.fy += fh / 2; targetPane.fh = fh / 2
+    } else if (effectiveSide === 'bottom') {
+      state.splitLayout.panes.push({ paneId: newId, tabId: sourceTabId, fx, fy: fy + fh / 2, fw, fh: fh / 2 })
+      targetPane.fh = fh / 2
+    } else return
+    state.splitLayout.activePaneId = newId
+    state.activeTabId = sourceTabId
+  }
+
+  updateBrowserViewBounds(state)
+  sendTabsUpdate(state)
+  sendSplitLayoutUpdate(state)
+})
+
+ipcMain.handle('remove-from-split', (event, tabId) => {
+  const state = stateForEvent(event) || splitHoverPopupOwnerState
+  if (!state?.splitLayout) return
+  state.tabDragging = false
+
+  const remaining = state.splitLayout.panes.filter(p => p.tabId !== tabId)
+
+  if (remaining.length <= 1) {
+    // Only 1 (or 0) panes left → exit split entirely
+    state.win.getBrowserViews().forEach(v => { try { state.win.removeBrowserView(v) } catch (_) {} })
+    state.splitLayout = null
+    const keepTabId = remaining[0]?.tabId || state.activeTabId
+    state.activeTabId = keepTabId
+    const tab = allTabs.get(keepTabId)
+    if (tab) state.win.addBrowserView(tab.view)
+  } else {
+    // Redistribute remaining panes into equal-sized slots
+    const rebalanced = redistributeEvenly(remaining)
+    state.splitLayout.panes = rebalanced
+    if (!rebalanced.find(p => p.paneId === state.splitLayout.activePaneId)) {
+      state.splitLayout.activePaneId = rebalanced[0].paneId
+      state.activeTabId = rebalanced[0].tabId
+    }
+  }
+
+  updateBrowserViewBounds(state)
+  sendTabsUpdate(state)
+  sendSplitLayoutUpdate(state)
+})
+
+ipcMain.handle('close-split', (event) => {
+  const state = stateForEvent(event) || splitHoverPopupOwnerState
+  if (!state) return
+  state.tabDragging = false
+  state.win.getBrowserViews().forEach(v => { try { state.win.removeBrowserView(v) } catch (_) {} })
+  state.splitLayout = null
+  const tab = allTabs.get(state.activeTabId)
+  if (tab) state.win.addBrowserView(tab.view)
+  updateBrowserViewBounds(state)
+  sendTabsUpdate(state)
+  sendSplitLayoutUpdate(state)
+})
+
+// Split hover popup: separate window so we don't hide the main window's web content
+let splitHoverPopupWindow = null
+let splitHoverPopupOwnerState = null
+let splitHoverPopupOwnerWebContents = null
+
+function hideSplitHoverPopupSafe() {
+  if (!splitHoverPopupWindow || splitHoverPopupWindow.isDestroyed()) return
+  splitHoverPopupWindow.hide()
+  const wc = splitHoverPopupOwnerWebContents
+  splitHoverPopupOwnerState = null
+  splitHoverPopupOwnerWebContents = null
+  if (wc && !wc.isDestroyed()) {
+    try { wc.send('split-hover-popup-closed') } catch (_) {}
+  }
+}
+
+ipcMain.on('show-split-hover-popup', (event, { left, top, tabId }) => {
+  const state = stateForEvent(event)
+  if (!state?.win) return
+  const mainWin = state.win
+  splitHoverPopupOwnerState = state
+  splitHoverPopupOwnerWebContents = mainWin.webContents
+
+  const sendOptionsAndShow = () => {
+    const opts = {
+      tabId,
+      showRemove: state.splitLayout && state.splitLayout.panes.some(p => p.tabId === tabId),
+      showExit: state.splitLayout && state.splitLayout.panes.length > 1
+    }
+    splitHoverPopupWindow.webContents.send('split-popup-options', opts)
+    const bounds = mainWin.getContentBounds()
+    const x = Math.round(bounds.x + left)
+    const y = Math.round(bounds.y + top)
+    splitHoverPopupWindow.setBounds({ x, y, width: 280, height: 240 })
+    splitHoverPopupWindow.show()
+    try { mainWin.webContents.send('split-hover-popup-opened', { left, top, width: 280, height: 240 }) } catch (_) {}
+  }
+
+  if (!splitHoverPopupWindow || splitHoverPopupWindow.isDestroyed()) {
+    splitHoverPopupWindow = new BrowserWindow({
+      parent: mainWin,
+      width: 280,
+      height: 240,
+      frame: false,
+      resizable: false,
+      show: false,
+      alwaysOnTop: true,
+      skipTaskbar: true,
+      webPreferences: {
+        nodeIntegration: false,
+        contextIsolation: true,
+        preload: path.join(__dirname, 'split-hover-popup-preload.js')
+      },
+      backgroundColor: '#252526'
+    })
+    splitHoverPopupWindow.setMenu(null)
+    splitHoverPopupWindow.on('closed', () => {
+      splitHoverPopupWindow = null
+      splitHoverPopupOwnerState = null
+      splitHoverPopupOwnerWebContents = null
+    })
+    splitHoverPopupWindow.webContents.once('did-finish-load', sendOptionsAndShow)
+    splitHoverPopupWindow.loadFile(path.join(__dirname, 'split-hover-popup.html'))
+  } else {
+    sendOptionsAndShow()
+  }
+})
+
+ipcMain.on('split-hover-popup-close', () => {
+  hideSplitHoverPopupSafe()
+})
+
+ipcMain.on('split-popup-mouse-enter', () => {
+  if (splitHoverPopupOwnerWebContents && !splitHoverPopupOwnerWebContents.isDestroyed()) {
+    try { splitHoverPopupOwnerWebContents.send('split-popup-mouse-enter') } catch (_) {}
+  }
+})
+ipcMain.on('split-popup-mouse-leave', () => {
+  if (splitHoverPopupOwnerWebContents && !splitHoverPopupOwnerWebContents.isDestroyed()) {
+    try { splitHoverPopupOwnerWebContents.send('split-popup-mouse-leave') } catch (_) {}
+  }
+})
+
+// ── Drag-preview helpers ─────────────────────────────────────────────────────
+const _dragIntervals = new Map()
+
+function detectSplitEdge(state, cursorScreenPos) {
+  const wb = state.win.getBounds()
+  const reserved = state.sidebarOpen ? state.sidebarWidth : 0
+  const leftChrome = state.leftChromeWidth || 0
+  const contentTop = state.contentTop ?? 128
+  const cx = wb.x + leftChrome
+  const cy = wb.y + contentTop
+  const cw = wb.width - leftChrome - reserved
+  const ch = wb.height - contentTop
+  const rx = cursorScreenPos.x - cx
+  const ry = cursorScreenPos.y - cy
+  if (rx < 0 || ry < 0 || rx > cw || ry > ch) return null
+  const edgeW = cw * 0.25
+  const edgeH = ch * 0.25
+  if (rx < edgeW) return 'left'
+  if (rx > cw - edgeW) return 'right'
+  if (ry < edgeH) return 'top'
+  if (ry > ch - edgeH) return 'bottom'
+  return null
+}
+
+function getPreviewStyle(edge) {
+  const base = 'position:fixed;top:0;left:0;right:0;bottom:0;pointer-events:none;z-index:2147483647;background:rgba(124,109,224,0.25);border:3px solid rgba(124,109,224,0.8);box-sizing:border-box;transition:all 0.1s ease;'
+  if (edge === 'right')  return base + 'left:50%;'
+  if (edge === 'left')   return base + 'right:50%;'
+  if (edge === 'top')    return base + 'bottom:50%;'
+  if (edge === 'bottom') return base + 'top:50%;'
+  return base + 'display:none;'
+}
+
+function injectPreviewInViews(state, edge) {
+  const css = getPreviewStyle(edge)
+  for (const view of state.win.getBrowserViews()) {
+    try {
+      view.webContents.executeJavaScript(`(function(){
+        let el=document.getElementById('__sp_preview__')
+        if(!el){el=document.createElement('div');el.id='__sp_preview__';document.body.appendChild(el)}
+        el.style.cssText=${JSON.stringify(css)}
+      })()`, true)
+    } catch (_) {}
+  }
+}
+
+function clearPreviewInViews(state) {
+  if (!state?.win) return
+  for (const view of state.win.getBrowserViews()) {
+    try {
+      view.webContents.executeJavaScript(`(function(){const el=document.getElementById('__sp_preview__');if(el)el.remove()})()`, true)
+    } catch (_) {}
+  }
+}
+
+ipcMain.on('tab-drag-start', (event) => {
+  const state = stateForEvent(event)
+  if (!state?.win) return
+  let lastEdge = undefined
+  const interval = setInterval(() => {
+    const cursor = screen.getCursorScreenPoint()
+    const edge = detectSplitEdge(state, cursor)
+    if (edge !== lastEdge) {
+      lastEdge = edge
+      if (edge) injectPreviewInViews(state, edge)
+      else clearPreviewInViews(state)
+      try { state.win.webContents.send('drag-edge-updated', edge) } catch (_) {}
+    }
+  }, 30)
+  _dragIntervals.set(state.win.id, interval)
+})
+
+ipcMain.on('tab-drag-end', (event) => {
+  const state = stateForEvent(event)
+  if (!state?.win) return
+  const interval = _dragIntervals.get(state.win.id)
+  if (interval) { clearInterval(interval); _dragIntervals.delete(state.win.id) }
+  clearPreviewInViews(state)
+  state.tabDragging = false
+  updateBrowserViewBounds(state)
+})
+
+ipcMain.on('set-active-split-pane', (event, paneId) => {
+  const state = stateForEvent(event)
+  if (!state?.splitLayout) return
+  const pane = state.splitLayout.panes.find(p => p.paneId === paneId)
+  if (pane) {
+    state.splitLayout.activePaneId = paneId
+    state.activeTabId = pane.tabId
+    sendSplitLayoutUpdate(state)
+    sendTabsUpdate(state)
+  }
 })
 
 // ── App Lifecycle ────────────────────────────────────────────────────────────

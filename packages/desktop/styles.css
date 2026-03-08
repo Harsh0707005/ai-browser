@@ -1042,7 +1042,7 @@ body.layout-sidebar .chrome-wrap .left-chrome-collapse-btn:hover {
 }
 
 .address-modal-suggestion.closed-tab .suggestion-icon {
-  color: #a78bfa;
+  color: #14b8a6;
 }
 
 /* Sidebar - blends with web content background (--content-bg set from page) */
@@ -2864,6 +2864,390 @@ body.settings-open.layout-sidebar .left-chrome-edge::before {
   font-size: 11px;
   color: #555;
   text-align: center;
+}
+
+/* ── Split View ──────────────────────────────────────────────────────────────*/
+
+/* Tab indicators when in split group — same tint and visual grouping */
+.tab.split-tab {
+  border-left: 2px solid #14b8a6;
+  background: rgba(20, 184, 166, 0.06);
+}
+.tab.split-tab.split-tab-active {
+  border-left-color: #2dd4bf;
+  background: rgba(20, 184, 166, 0.12);
+}
+body.layout-sidebar .chrome-wrap .tab.split-tab {
+  border-left: 2px solid #14b8a6;
+  background: rgba(20, 184, 166, 0.06);
+}
+body.layout-sidebar .chrome-wrap .tab.split-tab.split-tab-active {
+  background: rgba(20, 184, 166, 0.12);
+  border-left-color: #2dd4bf;
+}
+
+/* First/last in split group — visual bracket */
+.tab.split-tab.split-tab-first { border-top-left-radius: 6px; border-bottom-left-radius: 6px; }
+.tab.split-tab.split-tab-last  { border-top-right-radius: 6px; border-bottom-right-radius: 6px; margin-right: 2px; }
+
+/* Remove-from-split button on split tabs */
+.tab-unsplit {
+  width: 16px;
+  height: 16px;
+  border: none;
+  background: rgba(20, 184, 166, 0.15);
+  border-radius: 3px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #14b8a6;
+  flex-shrink: 0;
+  padding: 0;
+  transition: background 0.15s, color 0.15s;
+}
+.tab-unsplit:hover {
+  background: rgba(20, 184, 166, 0.4);
+  color: #fff;
+}
+
+/* Cursor while dragging a tab */
+body.tab-dragging,
+body.tab-dragging * {
+  cursor: grabbing !important;
+  user-select: none !important;
+}
+
+/* ── Drop-zone overlay (square with quadrants: 2H/2V/3H/3V/4) ─────────────────*/
+.drop-zone-overlay {
+  position: fixed;
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 0.18s;
+  z-index: 9500;
+  display: grid;
+  grid-template-areas:
+    "3rows 3rows 3rows 3rows"
+    "3cols top-left  top    top-right"
+    "3cols left      center right"
+    "3cols bottom-left bottom bottom-right";
+  grid-template-columns: 14% 28% 28% 28%;
+  grid-template-rows:    14% 28% 28% 28%;
+  gap: 4px;
+  padding: 8px;
+  box-sizing: border-box;
+  background: rgba(0, 0, 0, 0.42);
+}
+.drop-zone-overlay.visible {
+  pointer-events: all;
+  opacity: 1;
+}
+
+.drop-zone {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 10px;
+  margin: 2px;
+  background: rgba(20, 184, 166, 0.08);
+  border: 2px dashed rgba(20, 184, 166, 0.25);
+  transition: background 0.15s, border-color 0.15s, transform 0.12s;
+  cursor: copy;
+}
+.drop-zone.hovered {
+  background: rgba(20, 184, 166, 0.28);
+  border-color: #14b8a6;
+  transform: scale(1.02);
+}
+.drop-zone-label {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  color: #14b8a6;
+  font-size: 10px;
+  font-weight: 500;
+  pointer-events: none;
+  opacity: 0.8;
+  transition: opacity 0.12s;
+}
+.drop-zone.hovered .drop-zone-label { opacity: 1; }
+
+.drop-zone-3rows        { grid-area: 3rows; }
+.drop-zone-3cols       { grid-area: 3cols; }
+.drop-zone-top-left    { grid-area: top-left; }
+.drop-zone-top         { grid-area: top; }
+.drop-zone-top-right   { grid-area: top-right; }
+.drop-zone-left        { grid-area: left; }
+.drop-zone-center      { grid-area: center; background: transparent; border-style: dotted; border-color: rgba(20,184,166,0.12); }
+.drop-zone-center.hovered { background: rgba(20, 184, 166, 0.12); }
+.drop-zone-right       { grid-area: right; }
+.drop-zone-bottom-left { grid-area: bottom-left; }
+.drop-zone-bottom      { grid-area: bottom; }
+.drop-zone-bottom-right { grid-area: bottom-right; }
+
+/* ── Guide widget ─────────────────────────────────────────────────────────── */
+.split-guide-widget {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  padding: 16px;
+  background: rgba(28, 27, 34, 0.96);
+  border: 1px solid rgba(124, 109, 224, 0.35);
+  border-radius: 18px;
+  box-shadow: 0 16px 56px rgba(0,0,0,0.75), 0 0 0 1px rgba(124,109,224,0.12);
+  backdrop-filter: blur(14px);
+}
+
+.sgw-row {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+}
+
+/* Individual drop-zone cells inside the guide */
+.sgw-zone {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  width: 64px;
+  min-height: 58px;
+  padding: 6px 4px 5px;
+  border: 1.5px solid rgba(124, 109, 224, 0.28);
+  border-radius: 10px;
+  background: rgba(124, 109, 224, 0.06);
+  cursor: copy;
+  color: #777;
+  font-size: 10px;
+  font-weight: 500;
+  letter-spacing: 0.01em;
+  transition: background 0.12s, border-color 0.12s, transform 0.1s, box-shadow 0.12s, color 0.12s;
+  user-select: none;
+}
+.sgw-zone.hovered {
+  background: rgba(124, 109, 224, 0.28);
+  border-color: #a78bfa;
+  color: #e0e0e0;
+  transform: scale(1.08);
+  box-shadow: 0 0 0 2px rgba(167,139,250,0.4), 0 4px 16px rgba(124,109,224,0.3);
+}
+
+/* Quad section: 2×2 + 3-col + 3-row stacked vertically */
+.sgw-quad-section {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+}
+.sgw-row-extra { display: flex; gap: 6px; }
+.sgw-zone-2x2, .sgw-zone-3cols, .sgw-zone-3rows { width: 64px; }
+
+/* ── Layout preview miniatures (pure CSS) ───────────────────────────────────*/
+.sgw-preview {
+  width: 38px;
+  height: 26px;
+  border-radius: 3px;
+  overflow: hidden;
+  pointer-events: none;
+  flex-shrink: 0;
+}
+
+/* 2 rows – top highlighted */
+.sp-2h-top {
+  background: linear-gradient(to bottom,
+    #a78bfa 0%, #a78bfa 52%,
+    rgba(124,109,224,0.18) 54%, rgba(124,109,224,0.18) 100%);
+}
+/* 2 rows – bottom highlighted */
+.sp-2h-bot {
+  background: linear-gradient(to bottom,
+    rgba(124,109,224,0.18) 0%, rgba(124,109,224,0.18) 48%,
+    #a78bfa 50%, #a78bfa 100%);
+}
+/* 2 cols – left highlighted */
+.sp-2v-left {
+  background: linear-gradient(to right,
+    #a78bfa 0%, #a78bfa 52%,
+    rgba(124,109,224,0.18) 54%, rgba(124,109,224,0.18) 100%);
+}
+/* 2 cols – right highlighted */
+.sp-2v-right {
+  background: linear-gradient(to right,
+    rgba(124,109,224,0.18) 0%, rgba(124,109,224,0.18) 48%,
+    #a78bfa 50%, #a78bfa 100%);
+}
+/* 2×2 quadrant grid */
+.sp-2x2 {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  grid-template-rows: 1fr 1fr;
+  gap: 2px;
+  padding: 2px;
+  background: rgba(124,109,224,0.1);
+  border: 1px solid rgba(124,109,224,0.3);
+  border-radius: 3px;
+}
+.sp-2x2-cell { background: rgba(167,139,250,0.55); border-radius: 2px; }
+
+/* 3 columns */
+.sp-3cols {
+  display: grid;
+  grid-template-columns: 1fr 1fr 1fr;
+  grid-template-rows: 1fr;
+  gap: 2px;
+  padding: 2px;
+  background: rgba(124,109,224,0.08);
+  border: 1px solid rgba(124,109,224,0.25);
+  border-radius: 3px;
+}
+.sp-3cols-cell { background: rgba(167,139,250,0.55); border-radius: 2px; }
+
+/* 3 rows */
+.sp-3rows {
+  display: grid;
+  grid-template-columns: 1fr;
+  grid-template-rows: 1fr 1fr 1fr;
+  gap: 2px;
+  padding: 2px;
+  background: rgba(124,109,224,0.08);
+  border: 1px solid rgba(124,109,224,0.25);
+  border-radius: 3px;
+}
+.sp-3rows-cell { background: rgba(167,139,250,0.55); border-radius: 2px; }
+
+/* ── Split hover popup ───────────────────────────────────────────────────────*/
+.split-hover-popup {
+  position: fixed;
+  z-index: 9600;
+  background: #252526;
+  border: 1px solid #3a3a3a;
+  border-radius: 10px;
+  padding: 10px;
+  min-width: 230px;
+  box-shadow: 0 8px 32px rgba(0,0,0,0.55);
+  pointer-events: none;
+  opacity: 0;
+  transform: translateY(-4px);
+  transition: opacity 0.15s, transform 0.15s;
+}
+.split-hover-popup.visible {
+  pointer-events: all;
+  opacity: 1;
+  transform: translateY(0);
+}
+
+.split-hover-title {
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: #666;
+  margin-bottom: 8px;
+  padding: 0 2px;
+}
+
+.split-hover-presets {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 6px;
+  margin-bottom: 6px;
+}
+
+.split-preset-btn {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 5px;
+  padding: 8px 6px;
+  background: #1e1e1e;
+  border: 1px solid #333;
+  border-radius: 8px;
+  cursor: pointer;
+  color: #bbb;
+  font-size: 10px;
+  transition: background 0.12s, border-color 0.12s, color 0.12s;
+}
+.split-preset-btn:hover {
+  background: rgba(20, 184, 166, 0.08);
+  border-color: #14b8a6;
+  color: #e0e0e0;
+}
+.split-preset-btn svg {
+  color: #14b8a6;
+  flex-shrink: 0;
+}
+
+.split-hover-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-top: 4px;
+}
+.split-action-btn {
+  width: 100%;
+  padding: 6px 10px;
+  background: transparent;
+  border: 1px solid #333;
+  border-radius: 6px;
+  cursor: pointer;
+  color: #aaa;
+  font-size: 11px;
+  text-align: left;
+  transition: background 0.12s, color 0.12s;
+}
+.split-action-btn:hover { background: #2d2d2d; color: #e0e0e0; }
+.split-action-remove { border-color: rgba(239,68,68,0.3); color: #f87171; }
+.split-action-remove:hover { background: rgba(239,68,68,0.1); color: #fca5a5; }
+
+/* ── Split close bar ─────────────────────────────────────────────────────────*/
+.split-close-bar {
+  position: fixed;
+  bottom: 12px;
+  left: 50%;
+  transform: translateX(-50%) translateY(60px);
+  z-index: 100002;
+  background: #252526;
+  border: 1px solid #3a3a3a;
+  border-radius: 20px;
+  padding: 6px 14px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  box-shadow: 0 4px 20px rgba(0,0,0,0.5);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.2s, transform 0.2s;
+}
+.split-close-bar.visible {
+  opacity: 1;
+  pointer-events: all;
+  transform: translateX(-50%) translateY(0);
+}
+.split-close-bar-label {
+  font-size: 11px;
+  color: #888;
+  font-weight: 500;
+}
+.split-close-bar-btn {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  padding: 4px 10px;
+  background: rgba(20, 184, 166, 0.15);
+  border: 1px solid rgba(20, 184, 166, 0.35);
+  border-radius: 12px;
+  cursor: pointer;
+  color: #14b8a6;
+  font-size: 11px;
+  transition: background 0.12s;
+}
+.split-close-bar-btn:hover {
+  background: rgba(20, 184, 166, 0.3);
+  color: #fff;
 }
 
 

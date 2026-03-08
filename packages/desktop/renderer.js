@@ -55,6 +55,18 @@ let sidebarOpen = false
 let isPrivateWindow = false
 let agentRunning = false
 let agentAbortRequested = false
+
+// ── Split view state ──────────────────────────────────────────────────────────
+let splitLayout = null        // mirrors main-process splitLayout
+let isDraggingTab = false
+let dragTabId = null
+let dragStartX = 0, dragStartY = 0
+let currentDragEdge = null    // edge reported by main-process polling during drag
+let hoverTabTimer = null      // setTimeout handle for hover-split popup
+let hoverTabId = null         // tab id currently being hovered
+let splitHoverPopupOpen = false  // true while the separate split-hover popup window is visible
+let splitPopupRect = null       // { left, top, width, height } in main-window content coords for 10px buffer
+let splitHoverPopupCloseTimer = null  // 1s delay before closing when hovered out
 const MAX_ACTIONS_PER_STEP = 5
 const WS_URL = 'ws://localhost:3001'
 
@@ -1827,6 +1839,17 @@ function renderTabs() {
     let cls = 'tab'
     if (tab.id === activeTabId) cls += ' active'
     if (agentTabIds.has(tab.id)) cls += ' agent-tab'
+
+    const isInSplit = splitLayout && splitLayout.panes.some(p => p.tabId === tab.id)
+    const isActiveSplitTab = isInSplit && splitLayout.panes.find(p => p.paneId === splitLayout.activePaneId)?.tabId === tab.id
+    if (isInSplit) {
+      cls += ' split-tab'
+      const paneIndex = splitLayout.panes.findIndex(p => p.tabId === tab.id)
+      if (paneIndex === 0) cls += ' split-tab-first'
+      if (paneIndex === splitLayout.panes.length - 1) cls += ' split-tab-last'
+    }
+    if (isActiveSplitTab) cls += ' split-tab-active'
+
     el.className = cls
     el.dataset.tabId = tab.id
 
@@ -1834,6 +1857,19 @@ function renderTabs() {
     title.className = 'tab-title'
     title.textContent = tab.title || 'New Tab'
     el.appendChild(title)
+
+    // Remove-from-split button (only while in split mode)
+    if (isInSplit) {
+      const unsplitBtn = document.createElement('button')
+      unsplitBtn.className = 'tab-unsplit'
+      unsplitBtn.title = 'Remove from split view'
+      unsplitBtn.innerHTML = '<svg width="9" height="9" viewBox="0 0 9 9" fill="none"><path d="M1.5 1.5L7.5 7.5M7.5 1.5L1.5 7.5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>'
+      unsplitBtn.addEventListener('click', (e) => {
+        e.stopPropagation()
+        if (window.electronAPI) window.electronAPI.removeFromSplit(tab.id)
+      })
+      el.appendChild(unsplitBtn)
+    }
 
     const close = document.createElement('button')
     close.className = 'tab-close'
@@ -1848,9 +1884,42 @@ function renderTabs() {
       if (window.electronAPI) window.electronAPI.switchTab(tab.id)
     })
 
+    // ── Drag to split ──────────────────────────────────────────────────────
+    el.addEventListener('mousedown', (e) => {
+      if (e.button !== 0) return
+      if (e.target.closest('.tab-close') || e.target.closest('.tab-unsplit')) return
+      dragTabId = tab.id
+      dragStartX = e.clientX
+      dragStartY = e.clientY
+      isDraggingTab = false
+      document.addEventListener('mousemove', onTabDragMove)
+      document.addEventListener('mouseup', onTabDragUp)
+    })
+
+    // ── Hover → split preset popup ─────────────────────────────────────────
+    el.addEventListener('mouseenter', () => {
+      hoverTabId = tab.id
+      clearTimeout(hoverTabTimer)
+      hoverTabTimer = setTimeout(() => showSplitHoverPopup(el, tab.id), 1000)
+      if (splitHoverPopupOpen) {
+        clearTimeout(splitHoverPopupCloseTimer)
+        splitHoverPopupCloseTimer = null
+      }
+    })
+    el.addEventListener('mouseleave', () => {
+      clearTimeout(hoverTabTimer)
+      hoverTabTimer = null
+      hoverTabId = null
+      if (splitHoverPopupOpen) {
+        clearTimeout(splitHoverPopupCloseTimer)
+        splitHoverPopupCloseTimer = setTimeout(hideSplitHoverPopup, 1000)
+      }
+    })
+
     tabList.appendChild(el)
   })
   updateAgentOverlay()
+  updateSplitCloseBar()
 }
 
 newTabBtn.addEventListener('click', () => {
@@ -2696,6 +2765,178 @@ function renderWaPanel(status, data = {}) {
     waPanel.className = 'wa-panel'
     return
   }
+}
+
+// ── Split view UI ─────────────────────────────────────────────────────────────
+
+const dropZoneOverlay  = document.getElementById('dropZoneOverlay')
+const splitHoverPopup  = document.getElementById('splitHoverPopup')
+const splitHoverActions = document.getElementById('splitHoverActions')
+const splitCloseBar    = document.getElementById('splitCloseBar')
+const splitCloseBtn    = document.getElementById('splitCloseBtn')
+
+// Position the drop-zone overlay over the browser content area
+function positionDropOverlay() {
+  if (!dropZoneOverlay) return
+  const contentTop = getContentTop()
+  const leftW = getLeftChromeWidth()
+  dropZoneOverlay.style.top    = contentTop + 'px'
+  dropZoneOverlay.style.left   = leftW + 'px'
+  dropZoneOverlay.style.right  = sidebarOpen ? (window.innerWidth - parseInt(sidebar.style.left || window.innerWidth)) + 'px' : '0'
+  dropZoneOverlay.style.bottom = '0'
+}
+
+function showDropZoneOverlay() {
+  if (!dropZoneOverlay) return
+  positionDropOverlay()
+  dropZoneOverlay.setAttribute('aria-hidden', 'false')
+  dropZoneOverlay.classList.add('visible')
+}
+
+function hideDropZoneOverlay() {
+  if (!dropZoneOverlay) return
+  dropZoneOverlay.setAttribute('aria-hidden', 'true')
+  dropZoneOverlay.classList.remove('visible')
+  dropZoneOverlay.querySelectorAll('.sgw-zone').forEach(z => z.classList.remove('hovered'))
+}
+
+function getDropZoneAtPoint(x, y) {
+  if (!dropZoneOverlay || !dropZoneOverlay.classList.contains('visible')) return null
+  // Check guide widget zones (data-side or data-preset)
+  const zones = dropZoneOverlay.querySelectorAll('.sgw-zone')
+  for (const zone of zones) {
+    const r = zone.getBoundingClientRect()
+    if (x >= r.left && x <= r.right && y >= r.top && y <= r.bottom) return zone
+  }
+  return null
+}
+
+function updateDropZoneHighlight(x, y) {
+  if (!dropZoneOverlay) return
+  dropZoneOverlay.querySelectorAll('.sgw-zone').forEach(z => z.classList.remove('hovered'))
+  const zone = getDropZoneAtPoint(x, y)
+  if (zone) zone.classList.add('hovered')
+}
+
+// ── Tab drag-and-drop ────────────────────────────────────────────────────────
+function onTabDragMove(e) {
+  if (!dragTabId) return
+  const dx = Math.abs(e.clientX - dragStartX)
+  const dy = Math.abs(e.clientY - dragStartY)
+  if (!isDraggingTab && (dx > 6 || dy > 6)) {
+    isDraggingTab = true
+    currentDragEdge = null
+    // Cancel hover popup timer — user is dragging, not hovering
+    clearTimeout(hoverTabTimer); hoverTabTimer = null
+    if (splitHoverPopupOpen) hideSplitHoverPopup()
+    if (window.electronAPI) window.electronAPI.tabDragStart()
+    document.body.classList.add('tab-dragging')
+  }
+}
+
+function onTabDragUp(_e) {
+  document.removeEventListener('mousemove', onTabDragMove)
+  document.removeEventListener('mouseup', onTabDragUp)
+
+  if (isDraggingTab) {
+    const edge = currentDragEdge
+    currentDragEdge = null
+    if (edge && window.electronAPI) {
+      window.electronAPI.applySplitLayout({ sourceTabId: dragTabId, side: edge })
+    } else if (window.electronAPI) {
+      window.electronAPI.tabDragEnd()
+    }
+    document.body.classList.remove('tab-dragging')
+  }
+
+  isDraggingTab = false
+  dragTabId = null
+}
+
+// ── Hover split popup (separate window so main window content stays visible) ───
+function showSplitHoverPopup(tabEl, tabId) {
+  if (!window.electronAPI) return
+  hideSplitHoverPopup()
+  const rect = tabEl.getBoundingClientRect()
+  const left = Math.min(rect.left, window.innerWidth - 280)
+  const top = rect.bottom + 6
+  window.electronAPI.showSplitHoverPopup(left, top, tabId)
+}
+
+function hideSplitHoverPopup() {
+  if (window.electronAPI) window.electronAPI.hideSplitHoverPopup()
+}
+
+if (window.electronAPI) {
+  window.electronAPI.onSplitHoverPopupOpened((bounds) => {
+    splitHoverPopupOpen = true
+    splitPopupRect = bounds && typeof bounds === 'object' ? bounds : null
+    clearTimeout(splitHoverPopupCloseTimer)
+    splitHoverPopupCloseTimer = null
+  })
+  window.electronAPI.onSplitHoverPopupClosed(() => {
+    splitHoverPopupOpen = false
+    splitPopupRect = null
+    clearTimeout(splitHoverPopupCloseTimer)
+    splitHoverPopupCloseTimer = null
+  })
+  window.electronAPI.onSplitPopupMouseEnter(() => {
+    clearTimeout(splitHoverPopupCloseTimer)
+    splitHoverPopupCloseTimer = null
+  })
+  window.electronAPI.onSplitPopupMouseLeave(() => {
+    clearTimeout(splitHoverPopupCloseTimer)
+    splitHoverPopupCloseTimer = setTimeout(hideSplitHoverPopup, 1000)
+  })
+  window.electronAPI.onDragEdgeUpdated((edge) => {
+    currentDragEdge = edge
+  })
+}
+
+function isInPopupBuffer(x, y) {
+  if (!splitPopupRect || !splitHoverPopupOpen) return false
+  const pad = 10
+  const l = splitPopupRect.left - pad
+  const t = splitPopupRect.top - pad
+  const r = splitPopupRect.left + splitPopupRect.width + pad
+  const b = splitPopupRect.top + splitPopupRect.height + pad
+  return x >= l && x <= r && y >= t && y <= b
+}
+
+document.addEventListener('mousemove', (e) => {
+  if (splitHoverPopupOpen && splitHoverPopupCloseTimer && isInPopupBuffer(e.clientX, e.clientY)) {
+    clearTimeout(splitHoverPopupCloseTimer)
+    splitHoverPopupCloseTimer = null
+  }
+})
+
+document.addEventListener('mousedown', () => {
+  if (splitHoverPopupOpen) hideSplitHoverPopup()
+})
+document.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape') { hideSplitHoverPopup(); hideDropZoneOverlay() }
+})
+
+// ── Split close bar ──────────────────────────────────────────────────────────
+function updateSplitCloseBar() {
+  if (!splitCloseBar) return
+  const hasSplit = splitLayout && splitLayout.panes.length > 1
+  splitCloseBar.setAttribute('aria-hidden', hasSplit ? 'false' : 'true')
+  splitCloseBar.classList.toggle('visible', !!hasSplit)
+}
+
+if (splitCloseBtn) {
+  splitCloseBtn.addEventListener('click', () => {
+    if (window.electronAPI) window.electronAPI.closeSplit()
+  })
+}
+
+// ── Listen for split layout changes from main process ────────────────────────
+if (window.electronAPI?.onSplitLayoutChanged) {
+  window.electronAPI.onSplitLayoutChanged((layout) => {
+    splitLayout = layout
+    renderTabs()
+  })
 }
 
 // Init WhatsApp panel

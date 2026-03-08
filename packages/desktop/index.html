@@ -184,6 +184,80 @@
     <div class="agent-border-overlay" id="agentBorderOverlay"></div>
     <div class="agent-toast" id="agentToast">Tab controlled by AI Assistant</div>
 
+    <!-- Split view: drop-zone overlay — square with quadrants (2H / 2V / 3H / 3V / 4) -->
+    <div class="drop-zone-overlay" id="dropZoneOverlay" aria-hidden="true">
+      <div class="drop-zone drop-zone-3rows" data-side="3-rows">
+        <div class="drop-zone-label"><svg width="24" height="12" viewBox="0 0 24 12" fill="none"><rect x="0" y="0" width="24" height="4" rx="2" fill="currentColor" opacity=".9"/><rect x="0" y="4" width="24" height="4" rx="2" fill="currentColor" opacity=".5"/><rect x="0" y="8" width="24" height="4" rx="2" fill="currentColor" opacity=".25"/></svg><span>3 Rows</span></div>
+      </div>
+      <div class="drop-zone drop-zone-3cols" data-side="3-cols">
+        <div class="drop-zone-label"><svg width="12" height="24" viewBox="0 0 12 24" fill="none"><rect x="0" y="0" width="4" height="24" rx="2" fill="currentColor" opacity=".9"/><rect x="4" y="0" width="4" height="24" rx="2" fill="currentColor" opacity=".5"/><rect x="8" y="0" width="4" height="24" rx="2" fill="currentColor" opacity=".25"/></svg><span>3 Cols</span></div>
+      </div>
+      <div class="drop-zone drop-zone-top-left" data-side="top-left">
+        <div class="drop-zone-label"><svg width="20" height="20" viewBox="0 0 20 20" fill="none"><rect x="0" y="0" width="9" height="9" rx="2" fill="currentColor" opacity=".9"/><rect x="11" y="0" width="9" height="9" rx="2" fill="currentColor" opacity=".3"/><rect x="0" y="11" width="9" height="9" rx="2" fill="currentColor" opacity=".3"/><rect x="11" y="11" width="9" height="9" rx="2" fill="currentColor" opacity=".2"/></svg><span>Quad</span></div>
+      </div>
+      <div class="drop-zone drop-zone-top" data-side="top">
+        <div class="drop-zone-label"><svg width="20" height="16" viewBox="0 0 20 16" fill="none"><rect x="0" y="0" width="20" height="7" rx="2" fill="currentColor" opacity=".9"/><rect x="0" y="9" width="20" height="7" rx="2" fill="currentColor" opacity=".3"/></svg><span>2 Up</span></div>
+      </div>
+      <div class="drop-zone drop-zone-top-right" data-side="top-right">
+        <div class="drop-zone-label"><svg width="20" height="20" viewBox="0 0 20 20" fill="none"><rect x="0" y="0" width="9" height="9" rx="2" fill="currentColor" opacity=".3"/><rect x="11" y="0" width="9" height="9" rx="2" fill="currentColor" opacity=".9"/><rect x="0" y="11" width="9" height="9" rx="2" fill="currentColor" opacity=".2"/><rect x="11" y="11" width="9" height="9" rx="2" fill="currentColor" opacity=".3"/></svg><span>Quad</span></div>
+      </div>
+      <div class="drop-zone drop-zone-left" data-side="left">
+        <div class="drop-zone-label"><svg width="16" height="20" viewBox="0 0 16 20" fill="none"><rect x="0" y="0" width="7" height="20" rx="2" fill="currentColor" opacity=".9"/><rect x="9" y="0" width="7" height="20" rx="2" fill="currentColor" opacity=".3"/></svg><span>2 Left</span></div>
+      </div>
+      <div class="drop-zone drop-zone-center" data-side="center">
+        <div class="drop-zone-label"><svg width="18" height="18" viewBox="0 0 18 18" fill="none"><rect x="0" y="0" width="18" height="18" rx="3" fill="currentColor" opacity=".9"/></svg><span>Replace</span></div>
+      </div>
+      <div class="drop-zone drop-zone-right" data-side="right">
+        <div class="drop-zone-label"><svg width="16" height="20" viewBox="0 0 16 20" fill="none"><rect x="0" y="0" width="7" height="20" rx="2" fill="currentColor" opacity=".3"/><rect x="9" y="0" width="7" height="20" rx="2" fill="currentColor" opacity=".9"/></svg><span>2 Right</span></div>
+      </div>
+      <div class="drop-zone drop-zone-bottom-left" data-side="bottom-left">
+        <div class="drop-zone-label"><svg width="20" height="20" viewBox="0 0 20 20" fill="none"><rect x="0" y="0" width="9" height="9" rx="2" fill="currentColor" opacity=".3"/><rect x="11" y="0" width="9" height="9" rx="2" fill="currentColor" opacity=".2"/><rect x="0" y="11" width="9" height="9" rx="2" fill="currentColor" opacity=".9"/><rect x="11" y="11" width="9" height="9" rx="2" fill="currentColor" opacity=".3"/></svg><span>Quad</span></div>
+      </div>
+      <div class="drop-zone drop-zone-bottom" data-side="bottom">
+        <div class="drop-zone-label"><svg width="20" height="16" viewBox="0 0 20 16" fill="none"><rect x="0" y="0" width="20" height="7" rx="2" fill="currentColor" opacity=".3"/><rect x="0" y="9" width="20" height="7" rx="2" fill="currentColor" opacity=".9"/></svg><span>2 Down</span></div>
+      </div>
+      <div class="drop-zone drop-zone-bottom-right" data-side="bottom-right">
+        <div class="drop-zone-label"><svg width="20" height="20" viewBox="0 0 20 20" fill="none"><rect x="0" y="0" width="9" height="9" rx="2" fill="currentColor" opacity=".2"/><rect x="11" y="0" width="9" height="9" rx="2" fill="currentColor" opacity=".3"/><rect x="0" y="11" width="9" height="9" rx="2" fill="currentColor" opacity=".3"/><rect x="11" y="11" width="9" height="9" rx="2" fill="currentColor" opacity=".9"/></svg><span>Quad</span></div>
+      </div>
+    </div>
+
+    <!-- Split hover popup (shown after 1s hover on a tab) -->
+    <div class="split-hover-popup" id="splitHoverPopup" aria-hidden="true">
+      <div class="split-hover-title">Split view</div>
+      <div class="split-hover-presets">
+        <button class="split-preset-btn" data-preset="left-right" title="Side by side">
+          <svg width="32" height="22" viewBox="0 0 32 22" fill="none"><rect x="1" y="1" width="13" height="20" rx="2" fill="currentColor" opacity=".85"/><rect x="18" y="1" width="13" height="20" rx="2" fill="currentColor" opacity=".4"/></svg>
+          <span>Side by side</span>
+        </button>
+        <button class="split-preset-btn" data-preset="top-bottom" title="Stack">
+          <svg width="32" height="22" viewBox="0 0 32 22" fill="none"><rect x="1" y="1" width="30" height="9" rx="2" fill="currentColor" opacity=".85"/><rect x="1" y="12" width="30" height="9" rx="2" fill="currentColor" opacity=".4"/></svg>
+          <span>Stacked</span>
+        </button>
+        <button class="split-preset-btn" data-preset="3-cols" title="3 columns">
+          <svg width="32" height="22" viewBox="0 0 32 22" fill="none"><rect x="1"  y="1" width="8" height="20" rx="2" fill="currentColor" opacity=".85"/><rect x="12" y="1" width="8" height="20" rx="2" fill="currentColor" opacity=".55"/><rect x="23" y="1" width="8" height="20" rx="2" fill="currentColor" opacity=".3"/></svg>
+          <span>3 Columns</span>
+        </button>
+        <button class="split-preset-btn" data-preset="left-right-split-right" title="Main + split right">
+          <svg width="32" height="22" viewBox="0 0 32 22" fill="none"><rect x="1" y="1" width="14" height="20" rx="2" fill="currentColor" opacity=".85"/><rect x="18" y="1" width="13" height="9" rx="2" fill="currentColor" opacity=".55"/><rect x="18" y="12" width="13" height="9" rx="2" fill="currentColor" opacity=".3"/></svg>
+          <span>Main + Split</span>
+        </button>
+        <button class="split-preset-btn" data-preset="2x2" title="4 quadrants">
+          <svg width="32" height="22" viewBox="0 0 32 22" fill="none"><rect x="1" y="1" width="13" height="9" rx="2" fill="currentColor" opacity=".85"/><rect x="18" y="1" width="13" height="9" rx="2" fill="currentColor" opacity=".6"/><rect x="1" y="12" width="13" height="9" rx="2" fill="currentColor" opacity=".4"/><rect x="18" y="12" width="13" height="9" rx="2" fill="currentColor" opacity=".2"/></svg>
+          <span>Quad</span>
+        </button>
+      </div>
+      <div class="split-hover-actions" id="splitHoverActions"></div>
+    </div>
+
+    <!-- Split close bar (shown when split is active) -->
+    <div class="split-close-bar" id="splitCloseBar" aria-hidden="true">
+      <span class="split-close-bar-label">Split view</span>
+      <button class="split-close-bar-btn" id="splitCloseBtn" title="Exit split view">
+        <svg width="12" height="12" viewBox="0 0 12 12" fill="none"><path d="M2 2L10 10M10 2L2 10" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>
+        Exit split
+      </button>
+    </div>
+
     <!-- Address / command modal (Arc/Zen style, sidebar layout only) -->
     <div class="address-modal-overlay" id="addressModalOverlay" aria-hidden="true">
       <div class="address-modal" id="addressModal" role="dialog" aria-label="Open URL or search">
