@@ -433,6 +433,25 @@ function handlePageShortcut(input, state) {
   const view = getActiveView(state)
   const ids = [...state.tabIds]
 
+  // Double-tap Cmd/Ctrl to open AI sidebar (when browser page has focus)
+  if (key === 'meta' || key === 'control') {
+    const now = Date.now()
+    if (now - (state.lastModKeyTime || 0) < 400) {
+      state.lastModKeyTime = 0
+      state.win.webContents.focus()
+      state.win.webContents.send('open-sidebar')
+      return true
+    }
+    state.lastModKeyTime = now
+    return false
+  }
+  // Cmd/Ctrl+E to toggle sidebar (left chrome in sidebar mode, AI sidebar in classic)
+  if (mod && key === 'e') {
+    state.win.webContents.focus()
+    state.win.webContents.send('shortcut-toggle-sidebar')
+    return true
+  }
+
   if (mod && key === 'n' && !input.shift) {
     createWindow(false)
     return true
@@ -595,16 +614,17 @@ function updateBrowserViewBounds(state) {
   if (!state?.win || !view) return
   const bounds = state.win.getContentBounds()
   const reserved = state.sidebarOpen ? state.sidebarWidth : 0
+  const leftChrome = state.leftChromeWidth || 0
   const tab = allTabs.get(state.activeTabId)
   const borderWidth = tab?.isAgent ? 6 : 0
   const findBarH = state.findBarOpen ? FIND_BAR_HEIGHT : 0
-  const toolbarH = (state.isPrivate ? TOOLBAR_HEIGHT_PRIVATE : TOOLBAR_HEIGHT_NORMAL) + findBarH
+  const contentTop = (state.contentTop ?? 128) + findBarH
 
   view.setBounds({
-    x: borderWidth,
-    y: toolbarH + borderWidth,
-    width: bounds.width - reserved - borderWidth * 2,
-    height: bounds.height - toolbarH - borderWidth * 2
+    x: leftChrome + borderWidth,
+    y: contentTop + borderWidth,
+    width: bounds.width - leftChrome - reserved - borderWidth * 2,
+    height: bounds.height - contentTop - borderWidth * 2
   })
 }
 
@@ -991,9 +1011,12 @@ function createWindow(isPrivate = false) {
     activeTabId: null,
     sidebarOpen: false,
     sidebarWidth: 0,
+    leftChromeWidth: 0,
+    contentTop: 128,
     findBarOpen: false,
     pendingCredVerifyTabId: null,
-    closedTabs: [] // last 15 closed tabs for reopen (url, title)
+    closedTabs: [], // last 15 closed tabs for reopen (url, title)
+    lastModKeyTime: 0
   }
   winStates.set(win.id, state)
 
@@ -1177,6 +1200,20 @@ ipcMain.on('sidebar-toggled', (event, isOpen) => {
 ipcMain.on('sidebar-width-changed', (event, width) => {
   const state = stateForEvent(event)
   if (state) { state.sidebarWidth = width; updateBrowserViewBounds(state) }
+})
+
+ipcMain.on('left-chrome-width-changed', (event, width) => {
+  const state = stateForEvent(event)
+  if (state) { state.leftChromeWidth = width; updateBrowserViewBounds(state) }
+})
+
+ipcMain.on('chrome-layout-changed', (event, { leftChromeWidth, contentTop }) => {
+  const state = stateForEvent(event)
+  if (state) {
+    if (leftChromeWidth !== undefined) state.leftChromeWidth = leftChromeWidth
+    if (contentTop !== undefined) state.contentTop = contentTop
+    updateBrowserViewBounds(state)
+  }
 })
 
 ipcMain.on('find-bar-open', (event) => {

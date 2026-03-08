@@ -32,6 +32,10 @@ const contactFormEmail = document.getElementById('contactFormEmail')
 const contactFormAddress = document.getElementById('contactFormAddress')
 const contactFormSave = document.getElementById('contactFormSave')
 const contactFormCancel = document.getElementById('contactFormCancel')
+const leftChromeRail = document.getElementById('leftChromeRail')
+const leftChromeEdge = document.getElementById('leftChromeEdge')
+const chromeWrap = document.getElementById('chromeWrap')
+const leftChromeCollapseBtn = document.getElementById('leftChromeCollapseBtn')
 
 const SIDEBAR_MIN_WIDTH = 280
 const SIDEBAR_MAX_WIDTH = 700
@@ -162,6 +166,7 @@ document.querySelectorAll('.settings-tab').forEach(tab => {
     if (appearanceSection) appearanceSection.classList.toggle('contacts-section-hidden', which !== 'appearance')
     if (which === 'contacts') loadContacts()
     if (which === 'integrations') { _intComposioStatuses = null; renderIntegrationsSection() }
+    if (which === 'appearance') syncLayoutPickerSelection()
   })
 })
 
@@ -188,8 +193,30 @@ function closeSettings() {
   if (window.electronAPI) window.electronAPI.showBrowserView()
 }
 
-// Appearance: layout selection (sidebar vs classic). UI only for now; applying layout is a separate step.
-let preferredLayout = 'classic'
+// Appearance: layout selection (sidebar vs classic). Sidebar = Arc/Zen style left chrome.
+const LAYOUT_STORAGE_KEY = 'ai-browser-preferred-layout'
+const LEFT_CHROME_EXPANDED_STORAGE_KEY = 'ai-browser-left-chrome-expanded'
+
+let preferredLayout = (typeof localStorage !== 'undefined' && localStorage.getItem(LAYOUT_STORAGE_KEY)) || 'classic'
+
+// Left chrome state (only when layout is 'sidebar'); restored from storage
+function loadLeftChromeExpanded() {
+  if (typeof localStorage === 'undefined') return false
+  const v = localStorage.getItem(LEFT_CHROME_EXPANDED_STORAGE_KEY)
+  return v === 'true'
+}
+
+function persistLeftChromeExpanded() {
+  if (typeof localStorage !== 'undefined') {
+    localStorage.setItem(LEFT_CHROME_EXPANDED_STORAGE_KEY, String(leftChromeExpanded))
+  }
+}
+
+let leftChromeExpanded = loadLeftChromeExpanded()
+let leftChromePeek = false
+const LEFT_CHROME_EDGE = 6
+const LEFT_CHROME_PEEK_WIDTH = 64
+const LEFT_CHROME_EXPANDED_WIDTH = 220
 
 function syncLayoutPickerSelection() {
   document.querySelectorAll('.layout-card').forEach(card => {
@@ -197,9 +224,60 @@ function syncLayoutPickerSelection() {
   })
 }
 
+function getLeftChromeWidth() {
+  if (preferredLayout !== 'sidebar') return 0
+  if (leftChromeExpanded) return LEFT_CHROME_EDGE + LEFT_CHROME_EXPANDED_WIDTH
+  if (leftChromePeek) return LEFT_CHROME_EDGE + LEFT_CHROME_PEEK_WIDTH
+  return LEFT_CHROME_EDGE // collapsed: reserve edge for hover strip
+}
+
+function getContentTop() {
+  return preferredLayout === 'sidebar' ? 30 : 128
+}
+
+function sendChromeLayout() {
+  if (window.electronAPI?.chromeLayoutChanged) {
+    window.electronAPI.chromeLayoutChanged({
+      leftChromeWidth: getLeftChromeWidth(),
+      contentTop: getContentTop()
+    })
+  }
+}
+
+function applyLeftChromeUI() {
+  if (!chromeWrap || !leftChromeRail) return
+  chromeWrap.classList.remove('left-chrome-expanded', 'left-chrome-peek')
+  leftChromeRail.style.setProperty('--left-chrome-panel-width', '0')
+  if (preferredLayout !== 'sidebar') return
+  if (leftChromeExpanded) {
+    chromeWrap.classList.add('left-chrome-expanded')
+    leftChromeRail.style.setProperty('--left-chrome-panel-width', LEFT_CHROME_EXPANDED_WIDTH + 'px')
+  } else if (leftChromePeek) {
+    chromeWrap.classList.add('left-chrome-peek')
+    leftChromeRail.style.setProperty('--left-chrome-panel-width', LEFT_CHROME_PEEK_WIDTH + 'px')
+  }
+}
+
+function applyLayout() {
+  if (preferredLayout === 'sidebar') {
+    document.body.classList.add('layout-sidebar')
+    leftChromeExpanded = loadLeftChromeExpanded()
+    leftChromePeek = false
+    applyLeftChromeUI()
+  } else {
+    document.body.classList.remove('layout-sidebar')
+    leftChromeExpanded = false
+    leftChromePeek = false
+    applyLeftChromeUI()
+  }
+  sendChromeLayout()
+}
+
 function setPreferredLayout(layout) {
   preferredLayout = layout
+  if (typeof localStorage !== 'undefined') localStorage.setItem(LAYOUT_STORAGE_KEY, layout)
   syncLayoutPickerSelection()
+  applyLayout()
 }
 
 document.querySelectorAll('.layout-card').forEach(card => {
@@ -208,6 +286,65 @@ document.querySelectorAll('.layout-card').forEach(card => {
     if (layout) setPreferredLayout(layout)
   })
 })
+
+// Left chrome (sidebar layout): hover peek, click to expand, Cmd+E to toggle
+function setupLeftChrome() {
+  if (!leftChromeEdge || !chromeWrap || !leftChromeCollapseBtn) return
+  leftChromeEdge.addEventListener('mouseenter', () => {
+    if (preferredLayout !== 'sidebar' || leftChromeExpanded) return
+    leftChromePeek = true
+    applyLeftChromeUI()
+    sendChromeLayout()
+  })
+  leftChromeEdge.addEventListener('click', (e) => {
+    e.preventDefault()
+    if (preferredLayout !== 'sidebar') return
+    leftChromeExpanded = true
+    leftChromePeek = false
+    persistLeftChromeExpanded()
+    applyLeftChromeUI()
+    sendChromeLayout()
+  })
+  chromeWrap.addEventListener('mouseleave', () => {
+    if (preferredLayout !== 'sidebar' || leftChromeExpanded) return
+    leftChromePeek = false
+    applyLeftChromeUI()
+    sendChromeLayout()
+  })
+  chromeWrap.addEventListener('click', (e) => {
+    if (preferredLayout !== 'sidebar' || leftChromeExpanded) return
+    if (leftChromePeek) {
+      leftChromeExpanded = true
+      leftChromePeek = false
+      persistLeftChromeExpanded()
+      applyLeftChromeUI()
+      sendChromeLayout()
+    }
+  })
+  leftChromeCollapseBtn.addEventListener('click', (e) => {
+    e.preventDefault()
+    if (preferredLayout !== 'sidebar') return
+    leftChromeExpanded = false
+    leftChromePeek = false
+    persistLeftChromeExpanded()
+    applyLeftChromeUI()
+    sendChromeLayout()
+  })
+}
+
+function toggleLeftChrome() {
+  if (preferredLayout !== 'sidebar') return
+  leftChromeExpanded = !leftChromeExpanded
+  if (leftChromeExpanded) leftChromePeek = false
+  persistLeftChromeExpanded()
+  applyLeftChromeUI()
+  sendChromeLayout()
+}
+
+setupLeftChrome()
+
+// Apply layout on load (after DOM ready)
+applyLayout()
 
 async function loadSavedLogins() {
   if (!savedLoginsList || !savedLoginsEmpty) return
@@ -716,6 +853,10 @@ window.addEventListener('blur', () => { _modKeyDown = false })
 
 if (window.electronAPI) {
   window.electronAPI.onOpenSidebar(() => openSidebarAndFocus())
+  window.electronAPI.onShortcutToggleSidebar(() => {
+    if (preferredLayout === 'sidebar') toggleLeftChrome()
+    else openSidebarAndFocus()
+  })
   window.electronAPI.onShortcutFocusAddressBar(() => {
     if (addressInput) {
       addressInput.focus()
@@ -1824,6 +1965,14 @@ document.addEventListener('keydown', (e) => {
   if (mod(e) && e.key === '0') {
     e.preventDefault()
     window.electronAPI.zoomReset()
+    return
+  }
+
+  // Toggle sidebar (Cmd/Ctrl+E): left chrome in sidebar layout, AI sidebar in classic
+  if (mod(e) && e.key === 'e') {
+    e.preventDefault()
+    if (preferredLayout === 'sidebar') toggleLeftChrome()
+    else openSidebarAndFocus()
     return
   }
 

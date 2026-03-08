@@ -52,6 +52,9 @@ contextBridge.exposeInMainWorld('electronAPI', {
   onUrlChanged: (callback) => ipcRenderer.on('url-changed', (event, data) => callback(data)),
   onNavigationStateChanged: (callback) => ipcRenderer.on('navigation-state-changed', (event, data) => callback(data)),
   onOpenSidebar: (callback) => ipcRenderer.on('open-sidebar', callback),
+  onShortcutToggleSidebar: (callback) => ipcRenderer.on('shortcut-toggle-sidebar', callback),
+  leftChromeWidthChanged: (width) => ipcRenderer.send('left-chrome-width-changed', width),
+  chromeLayoutChanged: (payload) => ipcRenderer.send('chrome-layout-changed', payload),
   onTabsUpdated: (callback) => ipcRenderer.on('tabs-updated', (event, data) => callback(data)),
   onSelectionAction: (callback) => ipcRenderer.on('selection-action', (event, data) => callback(data)),
 
