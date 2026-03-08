@@ -1,4 +1,4 @@
-const { app, BrowserWindow, BrowserView, ipcMain, session, Menu, screen } = require('electron/main')
+const { app, BrowserWindow, BrowserView, ipcMain, protocol, session, Menu, screen } = require('electron/main')
 const path = require('path')
 const fs = require('fs')
 const crypto = require('crypto')
@@ -749,6 +749,8 @@ function wireViewEvents(tabId, view, state) {
   })
 
   view.webContents.on('did-start-loading', () => {
+    const tab = allTabs.get(tabId)
+    if (tab && tab.loadingErrorPage) return
     if (tabId === state.activeTabId && state.win) {
       state.win.webContents.send('navigation-start')
     }
@@ -756,8 +758,27 @@ function wireViewEvents(tabId, view, state) {
 
   view.webContents.on('did-finish-load', () => {
     const tab = allTabs.get(tabId)
+    const currentUrl = view.webContents.getURL()
+    if (currentUrl.startsWith('browser-error://')) {
+      if (tab) {
+        tab.loadingErrorPage = false
+        tab.url = tab.failedUrl || currentUrl
+        tab.title = 'Page load failed'
+        sendTabsUpdate(state)
+      }
+      if (tabId === state.activeTabId && state.win) {
+        state.win.webContents.send('navigation-complete', {
+          url: (tab && tab.failedUrl) ? tab.failedUrl : currentUrl,
+          title: 'Page load failed',
+          canGoBack: view.webContents.canGoBack(),
+          canGoForward: view.webContents.canGoForward()
+        })
+        state.win.webContents.send('content-background', '#1a1a1a')
+      }
+      return
+    }
     if (tab) {
-      tab.url = view.webContents.getURL()
+      tab.url = currentUrl
       tab.title = view.webContents.getTitle() || tab.url
       sendTabsUpdate(state)
     }
@@ -810,6 +831,7 @@ function wireViewEvents(tabId, view, state) {
     `)
     view.webContents.executeJavaScript(`
       (function() {
+        if (window.location.protocol === 'browser-error:') return;
         if (document.getElementById('ai-sel-popup')) return;
         var popup = document.createElement('div');
         popup.id = 'ai-sel-popup';
@@ -848,11 +870,14 @@ function wireViewEvents(tabId, view, state) {
           hide(); window.getSelection().removeAllRanges();
         }
         document.addEventListener('mouseup', function(e) {
+          if (window.location.protocol === 'browser-error:') return;
           if (popup.contains(e.target)) return;
           setTimeout(function() {
+            if (window.location.protocol === 'browser-error:') return;
             var sel = window.getSelection();
             if (!sel || sel.rangeCount === 0) { hide(); return; }
             var range = sel.getRangeAt(0);
+            if (range.collapsed) { hide(); return; }
             var t = (sel ? sel.toString() : '').trim();
             if (t.length <= 3) { hide(); return; }
             function isInEditable(node) {
@@ -936,18 +961,38 @@ function wireViewEvents(tabId, view, state) {
     }
   })
 
-  view.webContents.on('did-fail-load', (event, errorCode, errorDescription) => {
+  view.webContents.on('did-fail-load', (event, errorCode, errorDescription, validatedURL, isMainFrame) => {
     if (tabId === state.activeTabId && state.win) {
       state.win.webContents.send('navigation-error', { errorCode, errorDescription })
+    }
+    if (isMainFrame && errorCode !== ERR_ABORTED && validatedURL && !validatedURL.startsWith('browser-error://')) {
+      const tab = allTabs.get(tabId)
+      if (tab) {
+        tab.failedUrl = validatedURL
+        tab.loadingErrorPage = true
+      }
+      const errorUrl = `browser-error://?url=${encodeURIComponent(validatedURL)}&code=${encodeURIComponent(String(errorCode))}&desc=${encodeURIComponent(errorDescription || '')}`
+      view.webContents.loadURL(errorUrl)
     }
   })
 
   view.webContents.on('did-navigate', (event, url) => {
     const tab = allTabs.get(tabId)
-    if (tab) { tab.url = url; tab.title = view.webContents.getTitle() || url; sendTabsUpdate(state) }
+    if (tab) {
+      if (url.startsWith('browser-error://') && tab.failedUrl) {
+        tab.url = tab.failedUrl
+        tab.title = 'Page load failed'
+      } else {
+        if (!url.startsWith('browser-error://')) tab.failedUrl = null
+        tab.url = url
+        tab.title = view.webContents.getTitle() || url
+      }
+      sendTabsUpdate(state)
+    }
     if (tabId === state.activeTabId && state.win) {
+      const displayUrl = (tab && url.startsWith('browser-error://') && tab.failedUrl) ? tab.failedUrl : url
       state.win.webContents.send('url-changed', {
-        url, canGoBack: view.webContents.canGoBack(), canGoForward: view.webContents.canGoForward()
+        url: displayUrl, canGoBack: view.webContents.canGoBack(), canGoForward: view.webContents.canGoForward()
       })
     }
   })
@@ -2151,7 +2196,7 @@ function detectSplitEdge(state, cursorScreenPos) {
 }
 
 function getPreviewStyle(edge) {
-  const base = 'position:fixed;top:0;left:0;right:0;bottom:0;pointer-events:none;z-index:2147483647;background:rgba(124,109,224,0.25);border:3px solid rgba(124,109,224,0.8);box-sizing:border-box;transition:all 0.1s ease;'
+  const base = 'position:fixed;top:0;left:0;right:0;bottom:0;pointer-events:none;z-index:2147483647;background:rgba(20,184,166,0.18);border:3px solid rgba(20,184,166,0.6);box-sizing:border-box;transition:all 0.1s ease;'
   if (edge === 'right')  return base + 'left:50%;'
   if (edge === 'left')   return base + 'right:50%;'
   if (edge === 'top')    return base + 'bottom:50%;'
@@ -2220,8 +2265,92 @@ ipcMain.on('set-active-split-pane', (event, paneId) => {
   }
 })
 
+// ── Custom error page protocol ───────────────────────────────────────────────
+const ERR_ABORTED = -3
+
+function getErrorMessage(code, description) {
+  const codeStr = String(code)
+  if (codeStr === '-105' || description.includes('ERR_NAME_NOT_RESOLVED')) return 'This site can’t be reached'
+  if (codeStr === '-106' || description.includes('ERR_INTERNET')) return 'You’re offline'
+  if (codeStr === '-502' || description.includes('ERR_CONNECTION_REFUSED')) return 'Connection refused'
+  if (codeStr === '-501' || description.includes('ERR_INSECURE')) return 'Connection not secure'
+  if (codeStr === '-310' || description.includes('ERR_TOO_MANY_REDIRECTS')) return 'Too many redirects'
+  if (description.includes('500') || description.includes('Internal Server Error')) return 'Server error (500)'
+  if (description.includes('502') || description.includes('Bad Gateway')) return 'Bad gateway (502)'
+  if (description.includes('503')) return 'Service unavailable (503)'
+  if (description.includes('404')) return 'Page not found (404)'
+  if (description.includes('403')) return 'Access denied (403)'
+  return 'This page couldn’t be loaded'
+}
+
+function buildErrorPageHTML(failedUrl, errorCode, errorDescription) {
+  const title = getErrorMessage(errorCode, errorDescription)
+  const safeUrl = failedUrl.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/"/g, '&quot;')
+  const safeDesc = (errorDescription || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/"/g, '&quot;')
+  return `<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>${title.replace(/&/g, '&amp;').replace(/</g, '&lt;')}</title>
+  <style>
+    * { box-sizing: border-box; }
+    body {
+      margin: 0; min-height: 100vh; display: flex; align-items: center; justify-content: center;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      background: #1a1a1a; color: #e0e0e0; padding: 24px; text-align: center;
+    }
+    .card {
+      max-width: 420px; width: 100%;
+    }
+    .icon { font-size: 48px; margin-bottom: 16px; opacity: 0.9; }
+    h1 { font-size: 20px; font-weight: 600; margin: 0 0 8px; color: #fff; }
+    .url { font-size: 13px; color: #888; word-break: break-all; margin-bottom: 24px; }
+    .detail { font-size: 12px; color: #666; margin-bottom: 28px; }
+    .actions { display: flex; gap: 12px; justify-content: center; flex-wrap: wrap; }
+    a {
+      display: inline-flex; align-items: center; justify-content: center;
+      padding: 10px 20px; border-radius: 8px; font-size: 14px; font-weight: 500;
+      text-decoration: none; transition: background 0.2s, color 0.2s;
+    }
+    .primary { background: #14b8a6; color: #fff; }
+    .primary:hover { background: #0d9488; }
+    .secondary { background: #333; color: #e0e0e0; }
+    .secondary:hover { background: #444; }
+  </style>
+</head>
+<body>
+  <div class="card">
+    <div class="icon" aria-hidden="true">⚠</div>
+    <h1>${title.replace(/&/g, '&amp;').replace(/</g, '&lt;')}</h1>
+    <p class="url">${safeUrl}</p>
+    ${safeDesc ? `<p class="detail">${safeDesc}</p>` : ''}
+    <div class="actions">
+      <a href="${safeUrl}" class="primary">Try again</a>
+      <a href="javascript:history.back()" class="secondary">Go back</a>
+    </div>
+  </div>
+</body>
+</html>`
+}
+
 // ── App Lifecycle ────────────────────────────────────────────────────────────
 app.whenReady().then(() => {
+  protocol.handle('browser-error', (request) => {
+    try {
+      const u = new URL(request.url)
+      const failedUrl = u.searchParams.get('url') || 'about:blank'
+      const code = u.searchParams.get('code') || ''
+      const desc = u.searchParams.get('desc') || ''
+      const html = buildErrorPageHTML(failedUrl, code, desc)
+      return new Response(html, {
+        headers: { 'Content-Type': 'text/html; charset=utf-8' }
+      })
+    } catch (_) {
+      return new Response('Error', { status: 500 })
+    }
+  })
+
   createWindow(false)
   Menu.setApplicationMenu(buildAppMenu())
 

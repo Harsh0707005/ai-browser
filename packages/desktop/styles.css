@@ -862,15 +862,31 @@ body.layout-sidebar .chrome-wrap .left-chrome-collapse-btn:hover {
   flex-shrink: 0;
   width: 16px;
   height: 16px;
+  display: none;
+  align-items: center;
+  justify-content: center;
+  opacity: 0;
+  transition: opacity 0.2s ease;
+}
+
+.loading-indicator.visible {
+  display: flex;
+  opacity: 1;
+}
+
+.loading-indicator .spinner {
+  width: 14px;
+  height: 14px;
+  border-width: 2px;
 }
 
 .spinner {
   width: 16px;
   height: 16px;
-  border: 2px solid #444;
+  border: 2px solid rgba(20, 184, 166, 0.25);
   border-top-color: #14b8a6;
   border-radius: 50%;
-  animation: spin 0.8s linear infinite;
+  animation: spin 0.7s linear infinite;
 }
 
 @keyframes spin {

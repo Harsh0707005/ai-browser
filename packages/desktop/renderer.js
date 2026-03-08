@@ -1693,9 +1693,26 @@ function updateNavigationButtons(canGoBack, canGoForward) {
   forwardBtn.disabled = !canGoForward
 }
 
-function showLoading(/* show */) {
-  // Loading indicator disabled — was showing in address bar for no reason
-  if (loadingIndicator) loadingIndicator.style.display = 'none'
+function showLoading(show) {
+  if (!loadingIndicator) return
+  if (show) {
+    loadingIndicator.classList.add('visible')
+    loadingIndicator.style.display = 'flex'
+    loadingIndicator.style.opacity = ''
+    requestAnimationFrame(() => { loadingIndicator.style.opacity = '1' })
+  } else {
+    loadingIndicator.style.opacity = '0'
+    let done = false
+    const hide = () => {
+      if (done) return
+      done = true
+      loadingIndicator.classList.remove('visible')
+      loadingIndicator.style.display = 'none'
+      loadingIndicator.style.opacity = ''
+    }
+    loadingIndicator.addEventListener('transitionend', hide, { once: true })
+    setTimeout(hide, 220)
+  }
 }
 
 function isContentBackgroundLight(hex) {
