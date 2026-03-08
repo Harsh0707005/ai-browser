@@ -406,6 +406,44 @@ const TOOLBAR_HEIGHT_NORMAL  = 128
 const TOOLBAR_HEIGHT_PRIVATE = 158  // +30px for the private window banner
 const FIND_BAR_HEIGHT = 48  // extra space when find bar is open so BrowserView doesn't overlap it
 
+// Sample page background so sidebar can blend (white page → white sidebar, etc.)
+const GET_PAGE_BACKGROUND_SCRIPT = `
+  (function() {
+    function parseRgb(s) {
+      if (!s || s === 'transparent') return null;
+      if (s === 'rgba(0, 0, 0, 0)') return null;
+      var m = s.match(/rgba?\\s*\\(\\s*(\\d+)\\s*,\\s*(\\d+)\\s*,\\s*(\\d+)(?:\\s*,\\s*[\\d.]+)?\\s*\\)/);
+      if (m) return { r: +m[1], g: +m[2], b: +m[3] };
+      var hex = s.match(/^#([0-9a-fA-F]{3}|[0-9a-fA-F]{6})$/);
+      if (hex) {
+        var h = hex[1];
+        if (h.length === 3) h = h[0]+h[0]+h[1]+h[1]+h[2]+h[2];
+        return { r: parseInt(h.slice(0,2), 16), g: parseInt(h.slice(2,4), 16), b: parseInt(h.slice(4,6), 16) };
+      }
+      return null;
+    }
+    function toHex(rgb) {
+      return '#' + [rgb.r, rgb.g, rgb.b].map(function(x) {
+        var h = Math.max(0, Math.min(255, Math.round(x))).toString(16);
+        return h.length === 1 ? '0' + h : h;
+      }).join('');
+    }
+    var body = getComputedStyle(document.body).backgroundColor;
+    var html = getComputedStyle(document.documentElement).backgroundColor;
+    var rgb = parseRgb(body) || parseRgb(html);
+    if (!rgb) return '#ffffff';
+    return toHex(rgb);
+  })()
+`
+
+async function sendContentBackground(state, view) {
+  if (!state?.win || !view) return
+  try {
+    const color = await view.webContents.executeJavaScript(GET_PAGE_BACKGROUND_SCRIPT)
+    if (color && typeof color === 'string') state.win.webContents.send('content-background', color)
+  } catch (_) {}
+}
+
 function stateForWindow(win) { return win ? winStates.get(win.id) : null }
 function stateForEvent(event) { return stateForWindow(event.sender.getOwnerBrowserWindow()) }
 function getActiveView(state) { return state?.activeTabId ? allTabs.get(state.activeTabId)?.view : null }
@@ -679,6 +717,7 @@ function wireViewEvents(tabId, view, state) {
         canGoBack: view.webContents.canGoBack(),
         canGoForward: view.webContents.canGoForward()
       })
+      sendContentBackground(state, view)
     }
 
     view.webContents.insertCSS(`
@@ -945,7 +984,10 @@ function switchTab(tabId, state) {
 
   state.activeTabId = tabId
   const tab = allTabs.get(tabId)
-  if (tab) state.win.addBrowserView(tab.view)
+  if (tab) {
+    state.win.addBrowserView(tab.view)
+    sendContentBackground(state, tab.view)
+  }
   updateBrowserViewBounds(state)
   sendTabsUpdate(state)
 

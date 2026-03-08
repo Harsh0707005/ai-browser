@@ -51,6 +51,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   onNavigationComplete: (callback) => ipcRenderer.on('navigation-complete', (event, data) => callback(data)),
   onNavigationError: (callback) => ipcRenderer.on('navigation-error', (event, data) => callback(data)),
   onUrlChanged: (callback) => ipcRenderer.on('url-changed', (event, data) => callback(data)),
+  onContentBackground: (callback) => ipcRenderer.on('content-background', (event, color) => callback(color)),
   onNavigationStateChanged: (callback) => ipcRenderer.on('navigation-state-changed', (event, data) => callback(data)),
   onOpenSidebar: (callback) => ipcRenderer.on('open-sidebar', callback),
   onShortcutToggleSidebar: (callback) => ipcRenderer.on('shortcut-toggle-sidebar', callback),

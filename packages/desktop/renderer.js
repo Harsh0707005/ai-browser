@@ -177,6 +177,7 @@ document.querySelectorAll('.settings-tab').forEach(tab => {
 function openSettings(tab) {
   if (!settingsOverlay) return
   if (window.electronAPI) window.electronAPI.hideBrowserView()
+  document.body.classList.add('settings-open')
   settingsOverlay.setAttribute('aria-hidden', 'false')
   const activeTab = tab || 'passwords'
   document.querySelectorAll('.settings-tab').forEach(t => t.classList.toggle('active', t.dataset.tab === activeTab))
@@ -192,6 +193,7 @@ function openSettings(tab) {
 
 function closeSettings() {
   if (!settingsOverlay) return
+  document.body.classList.remove('settings-open')
   settingsOverlay.setAttribute('aria-hidden', 'true')
   if (window.electronAPI) window.electronAPI.showBrowserView()
 }
@@ -1693,6 +1695,24 @@ function showLoading(/* show */) {
   if (loadingIndicator) loadingIndicator.style.display = 'none'
 }
 
+function isContentBackgroundLight(hex) {
+  if (!hex || typeof hex !== 'string') return false
+  const m = hex.match(/^#?([0-9a-fA-F]{3}|[0-9a-fA-F]{6})$/)
+  if (!m) return false
+  let r, g, b
+  if (m[1].length === 3) {
+    r = parseInt(m[1][0] + m[1][0], 16) / 255
+    g = parseInt(m[1][1] + m[1][1], 16) / 255
+    b = parseInt(m[1][2] + m[1][2], 16) / 255
+  } else {
+    r = parseInt(m[1].slice(0, 2), 16) / 255
+    g = parseInt(m[1].slice(2, 4), 16) / 255
+    b = parseInt(m[1].slice(4, 6), 16) / 255
+  }
+  const luminance = 0.299 * r + 0.587 * g + 0.114 * b
+  return luminance > 0.4
+}
+
 if (window.electronAPI) {
   window.electronAPI.onNavigationStart(() => { showLoading(true) })
 
@@ -1709,6 +1729,45 @@ if (window.electronAPI) {
     else {
       updateAddressBar(data.url)
       if (data.canGoBack !== undefined) updateNavigationButtons(data.canGoBack, data.canGoForward)
+    }
+  })
+
+  window.electronAPI.onContentBackground((color) => {
+    document.documentElement.style.setProperty('--content-bg', color)
+    const root = document.documentElement
+    const isLight = isContentBackgroundLight(color)
+    root.dataset.contentTheme = isLight ? 'light' : 'dark'
+    if (isLight) {
+      root.style.setProperty('--chrome-fg', '#1a1a1a')
+      root.style.setProperty('--chrome-fg-muted', '#555')
+      root.style.setProperty('--chrome-hover-bg', 'rgba(0,0,0,0.06)')
+      root.style.setProperty('--chrome-active-bg', 'rgba(0,0,0,0.1)')
+      root.style.setProperty('--chrome-border', 'rgba(0,0,0,0.12)')
+      root.style.setProperty('--chrome-border-strong', 'rgba(0,0,0,0.2)')
+      root.style.setProperty('--input-bg', 'rgba(0,0,0,0.05)')
+      root.style.setProperty('--input-fg', '#1a1a1a')
+      root.style.setProperty('--input-placeholder', '#666')
+      root.style.setProperty('--input-border', 'rgba(0,0,0,0.2)')
+      root.style.setProperty('--input-focus-border', 'rgba(0,0,0,0.35)')
+      root.style.setProperty('--sidebar-header-bg', 'rgba(0,0,0,0.06)')
+      root.style.setProperty('--sidebar-header-border', 'rgba(0,0,0,0.12)')
+      root.style.setProperty('--sidebar-resize-hover', 'rgba(20, 184, 166, 0.25)')
+    } else {
+      root.dataset.contentTheme = 'dark'
+      root.style.removeProperty('--chrome-fg')
+      root.style.removeProperty('--chrome-fg-muted')
+      root.style.removeProperty('--chrome-hover-bg')
+      root.style.removeProperty('--chrome-active-bg')
+      root.style.removeProperty('--chrome-border')
+      root.style.removeProperty('--chrome-border-strong')
+      root.style.removeProperty('--input-bg')
+      root.style.removeProperty('--input-fg')
+      root.style.removeProperty('--input-placeholder')
+      root.style.removeProperty('--input-border')
+      root.style.removeProperty('--input-focus-border')
+      root.style.removeProperty('--sidebar-header-bg')
+      root.style.removeProperty('--sidebar-header-border')
+      root.style.removeProperty('--sidebar-resize-hover')
     }
   })
 
