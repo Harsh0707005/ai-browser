@@ -18,6 +18,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   closeTab: (tabId) => ipcRenderer.send('close-tab', tabId),
   switchTab: (tabId) => ipcRenderer.send('switch-tab', tabId),
   reopenClosedTab: () => ipcRenderer.send('reopen-closed-tab'),
+  getClosedTabs: () => ipcRenderer.invoke('get-closed-tabs'),
   scrollPageToTop: () => ipcRenderer.send('scroll-page', 'top'),
   scrollPageToBottom: () => ipcRenderer.send('scroll-page', 'bottom'),
   stopLoading: () => ipcRenderer.send('stop-loading'),
@@ -68,7 +69,10 @@ contextBridge.exposeInMainWorld('electronAPI', {
   onPrivateWindowMode: (cb) => ipcRenderer.on('private-window-mode', cb),
 
   onShortcutFocusAddressBar: (cb) => ipcRenderer.on('shortcut-focus-address-bar', cb),
+  onShortcutOpenAddressModal: (cb) => ipcRenderer.on('shortcut-open-address-modal', cb),
   onShortcutOpenFind: (cb) => ipcRenderer.on('shortcut-open-find', cb),
+  addressModalOpened: () => ipcRenderer.send('address-modal-opened'),
+  addressModalClosed: () => ipcRenderer.send('address-modal-closed'),
 
   whatsappGetStatus: () => ipcRenderer.invoke('whatsapp-get-status'),
   whatsappConnect: () => ipcRenderer.invoke('whatsapp-connect'),

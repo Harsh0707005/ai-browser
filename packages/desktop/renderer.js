@@ -36,6 +36,9 @@ const leftChromeRail = document.getElementById('leftChromeRail')
 const leftChromeEdge = document.getElementById('leftChromeEdge')
 const chromeWrap = document.getElementById('chromeWrap')
 const leftChromeCollapseBtn = document.getElementById('leftChromeCollapseBtn')
+const addressModalOverlay = document.getElementById('addressModalOverlay')
+const addressModalInput = document.getElementById('addressModalInput')
+const addressModalSuggestions = document.getElementById('addressModalSuggestions')
 
 const SIDEBAR_MIN_WIDTH = 280
 const SIDEBAR_MAX_WIDTH = 700
@@ -858,9 +861,18 @@ if (window.electronAPI) {
     else openSidebarAndFocus()
   })
   window.electronAPI.onShortcutFocusAddressBar(() => {
-    if (addressInput) {
+    if (preferredLayout === 'sidebar') {
+      openAddressModal(false)
+    } else if (addressInput) {
       addressInput.focus()
       addressInput.select()
+    }
+  })
+  window.electronAPI.onShortcutOpenAddressModal(() => {
+    if (preferredLayout === 'sidebar') {
+      openAddressModal(true)
+    } else {
+      window.electronAPI.createTab()
     }
   })
   window.electronAPI.onShortcutOpenFind(() => {
@@ -1868,7 +1880,230 @@ function closeFindBar() {
   findInput.value = ''
 }
 
+// ── Address modal (Arc/Zen style, sidebar layout) ─────────────────────────────
+let addressModalSelectedIndex = 0
+let addressModalSuggestionsList = []
+let addressModalPreferNewTab = false
+
+function isAddressModalOpen() {
+  return addressModalOverlay && addressModalOverlay.getAttribute('aria-hidden') === 'false'
+}
+
+function closeAddressModal() {
+  if (!addressModalOverlay) return
+  addressModalOverlay.setAttribute('aria-hidden', 'true')
+  if (addressModalInput) addressModalInput.value = ''
+  addressModalSuggestionsList = []
+  addressModalSelectedIndex = 0
+  if (window.electronAPI?.addressModalClosed) window.electronAPI.addressModalClosed()
+}
+
+function openAddressModal(preferNewTab = false) {
+  if (!addressModalOverlay || !addressModalInput || !addressModalSuggestions) return
+  addressModalPreferNewTab = preferNewTab
+  addressModalOverlay.setAttribute('aria-hidden', 'false')
+  addressModalInput.value = currentUrl || ''
+  addressModalInput.select()
+  addressModalSelectedIndex = 0
+  updateAddressModalSuggestions(addressModalInput.value.trim())
+  if (window.electronAPI?.addressModalOpened) window.electronAPI.addressModalOpened()
+  requestAnimationFrame(() => {
+    requestAnimationFrame(() => {
+      addressModalInput.focus()
+    })
+  })
+}
+
+// Heuristic: input looks like a URL (direct navigation) vs search query (Google search)
+function isLikelyUrl(input) {
+  const s = (input || '').trim()
+  if (!s) return false
+  if (s.startsWith('http://') || s.startsWith('https://')) return true
+  if (/^localhost(\:\d+)?(\/|$)/i.test(s)) return true
+  if (s.includes(' ')) return false
+  const lastDot = s.lastIndexOf('.')
+  if (lastDot === -1) return false
+  const tld = s.slice(lastDot + 1).toLowerCase()
+  const validTld = /^[a-z]{2,6}$/.test(tld)
+  const hasHost = s.slice(0, lastDot).length >= 2
+  return validTld && hasHost
+}
+
+function normalizeUrlForNavigation(input) {
+  const s = (input || '').trim()
+  if (!s) return ''
+  if (s.startsWith('http://') || s.startsWith('https://')) return s
+  if (isLikelyUrl(s)) return 'https://' + s
+  return s
+}
+
+function buildAddressModalSuggestions(query) {
+  const raw = (query || '').trim()
+  const q = raw.toLowerCase()
+  const suggestions = []
+
+  if (raw.length > 0) {
+    if (isLikelyUrl(raw)) {
+      const displayUrl = raw.startsWith('http://') || raw.startsWith('https://') ? raw : 'https://' + raw
+      suggestions.push({
+        type: 'go',
+        label: 'Go to ' + (raw.length > 45 ? raw.slice(0, 45) + '…' : raw),
+        url: displayUrl,
+        icon: 'go',
+        meta: 'Open URL'
+      })
+    } else {
+      suggestions.push({
+        type: 'search',
+        label: 'Search Google for "' + (raw.length > 40 ? raw.slice(0, 40) + '…' : raw) + '"',
+        url: 'https://www.google.com/search?q=' + encodeURIComponent(query),
+        icon: 'search',
+        meta: 'Google Search'
+      })
+    }
+  }
+
+  const tabSuggestions = (tabsState || []).filter((t) => {
+    if (!q) return true
+    const title = (t.title || '').toLowerCase()
+    const url = (t.url || '').toLowerCase()
+    return title.includes(q) || url.includes(q)
+  })
+  tabSuggestions.forEach((t) => {
+    suggestions.push({
+      type: 'tab',
+      label: t.title || t.url || 'Tab',
+      url: t.url,
+      tabId: t.id,
+      icon: 'tab'
+    })
+  })
+
+  function addClosedAndRender(closed) {
+    if (Array.isArray(closed)) {
+      const closedFiltered = closed.slice(0, 8).filter((c) => {
+        if (!q) return true
+        const title = (c.title || '').toLowerCase()
+        const url = (c.url || '').toLowerCase()
+        return title.includes(q) || url.includes(q)
+      })
+      closedFiltered.forEach((c) => {
+        suggestions.push({
+          type: 'closed-tab',
+          label: c.title || c.url || 'Closed tab',
+          url: c.url,
+          icon: 'closed-tab'
+        })
+      })
+    }
+    renderAddressModalSuggestions(suggestions)
+  }
+
+  if (window.electronAPI && typeof window.electronAPI.getClosedTabs === 'function') {
+    window.electronAPI.getClosedTabs().then(addClosedAndRender).catch(() => addClosedAndRender([]))
+  } else {
+    addClosedAndRender([])
+  }
+}
+
+function renderAddressModalSuggestions(suggestions) {
+  addressModalSuggestionsList = suggestions
+  if (!addressModalSuggestions) return
+  addressModalSuggestions.innerHTML = ''
+  suggestions.forEach((s, i) => {
+    const btn = document.createElement('button')
+    btn.type = 'button'
+    btn.className = 'address-modal-suggestion ' + (s.type === 'search' ? 'search-action' : s.type) + (s.type === 'go' ? ' go-action' : '')
+    btn.dataset.index = String(i)
+    const icon = s.type === 'search' ? '⌕' : (s.type === 'go' ? '↗' : (s.type === 'tab' ? '◫' : '↩'))
+    const meta = s.meta != null ? s.meta : (s.url || '')
+    btn.innerHTML = '<span class="suggestion-icon">' + icon + '</span><span class="suggestion-label">' + escapeHTML(s.label) + '</span>' + (meta ? '<span class="suggestion-meta">' + escapeHTML(meta) + '</span>' : '')
+    btn.addEventListener('click', () => pickAddressModalSuggestion(s, addressModalPreferNewTab))
+    addressModalSuggestions.appendChild(btn)
+  })
+  addressModalSelectedIndex = Math.min(addressModalSelectedIndex, Math.max(0, suggestions.length - 1))
+  const all = addressModalSuggestions.querySelectorAll('.address-modal-suggestion')
+  all.forEach((el, i) => el.classList.toggle('selected', i === addressModalSelectedIndex))
+}
+
+function pickAddressModalSuggestion(item, newTab) {
+  if (!item) return
+  if (item.type === 'tab' && item.tabId && window.electronAPI) {
+    window.electronAPI.switchTab(item.tabId)
+    closeAddressModal()
+    return
+  }
+  const url = item.url || (addressModalInput && addressModalInput.value.trim()) || ''
+  if (!url) return
+  closeAddressModal()
+  if (newTab && window.electronAPI) {
+    window.electronAPI.createTab(url)
+  } else if (window.electronAPI) {
+    window.electronAPI.navigate(url)
+  }
+}
+
+function updateAddressModalSuggestions(query) {
+  buildAddressModalSuggestions(query)
+}
+
+if (addressModalOverlay && addressModalInput && addressModalSuggestions) {
+  addressModalInput.addEventListener('input', () => {
+    if (!isAddressModalOpen()) return
+    updateAddressModalSuggestions(addressModalInput.value.trim())
+  })
+  addressModalInput.addEventListener('keydown', (e) => {
+    if (!isAddressModalOpen()) return
+    if (e.key === 'Escape') {
+      closeAddressModal()
+      e.preventDefault()
+      return
+    }
+    if (e.key === 'Enter') {
+      e.preventDefault()
+      const newTab = e.metaKey || e.ctrlKey || addressModalPreferNewTab
+      const sel = addressModalSuggestionsList[addressModalSelectedIndex]
+      if (sel) {
+        pickAddressModalSuggestion(sel, newTab)
+      } else {
+        const raw = addressModalInput.value.trim()
+        if (raw) {
+          closeAddressModal()
+          const url = normalizeUrlForNavigation(raw)
+          const target = url && isLikelyUrl(raw) ? url : raw
+          if (newTab && window.electronAPI) {
+            window.electronAPI.createTab(target)
+          } else if (window.electronAPI) {
+            window.electronAPI.navigate(target)
+          }
+        }
+      }
+      return
+    }
+    if (e.key === 'ArrowDown') {
+      e.preventDefault()
+      addressModalSelectedIndex = Math.min(addressModalSelectedIndex + 1, addressModalSuggestionsList.length - 1)
+      addressModalSuggestions.querySelectorAll('.address-modal-suggestion').forEach((el, i) => el.classList.toggle('selected', i === addressModalSelectedIndex))
+      return
+    }
+    if (e.key === 'ArrowUp') {
+      e.preventDefault()
+      addressModalSelectedIndex = Math.max(0, addressModalSelectedIndex - 1)
+      addressModalSuggestions.querySelectorAll('.address-modal-suggestion').forEach((el, i) => el.classList.toggle('selected', i === addressModalSelectedIndex))
+      return
+    }
+  })
+  addressModalOverlay.addEventListener('click', (e) => {
+    if (e.target === addressModalOverlay) closeAddressModal()
+  })
+}
+
 document.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape' && isAddressModalOpen()) {
+    closeAddressModal()
+    e.preventDefault()
+    return
+  }
   if (e.key === 'Escape' && settingsOverlay && settingsOverlay.getAttribute('aria-hidden') === 'false') {
     closeSettings()
     return
@@ -1887,10 +2122,14 @@ document.addEventListener('keydown', (e) => {
     window.electronAPI.createWindow()
     return
   }
-  // New tab (Cmd/Ctrl+T)
+  // New tab (Cmd/Ctrl+T) — in sidebar layout open address modal instead (open in new tab on submit)
   if (mod(e) && !e.shiftKey && e.key === 't') {
     e.preventDefault()
-    window.electronAPI.createTab()
+    if (preferredLayout === 'sidebar') {
+      openAddressModal(true)
+    } else {
+      window.electronAPI.createTab()
+    }
     return
   }
   // New private window (Cmd/Ctrl+Shift+N)
@@ -1939,10 +2178,12 @@ document.addEventListener('keydown', (e) => {
     return
   }
 
-  // Focus address bar (Cmd/Ctrl+L, Alt+D)
+  // Focus address bar (Cmd/Ctrl+L, Alt+D) — in sidebar layout open address modal instead (open in same tab on submit)
   if ((mod(e) && e.key === 'l') || (e.altKey && e.key === 'd')) {
     e.preventDefault()
-    if (addressInput) {
+    if (preferredLayout === 'sidebar') {
+      openAddressModal(false)
+    } else if (addressInput) {
       addressInput.focus()
       addressInput.select()
     }

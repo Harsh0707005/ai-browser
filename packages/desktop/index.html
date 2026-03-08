@@ -184,6 +184,20 @@
     <div class="agent-border-overlay" id="agentBorderOverlay"></div>
     <div class="agent-toast" id="agentToast">Tab controlled by AI Assistant</div>
 
+    <!-- Address / command modal (Arc/Zen style, sidebar layout only) -->
+    <div class="address-modal-overlay" id="addressModalOverlay" aria-hidden="true">
+      <div class="address-modal" id="addressModal" role="dialog" aria-label="Open URL or search">
+        <div class="address-modal-bar">
+          <svg class="address-modal-icon" width="18" height="18" viewBox="0 0 16 16" fill="none">
+            <circle cx="8" cy="8" r="3" stroke="currentColor" stroke-width="1.5"/>
+            <path d="M8 1 L8 3 M8 13 L8 15 M1 8 L3 8 M13 8 L15 8" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
+          </svg>
+          <input type="text" id="addressModalInput" class="address-modal-input" placeholder="Search or enter website name" spellcheck="false" autocomplete="off" />
+        </div>
+        <div class="address-modal-suggestions" id="addressModalSuggestions"></div>
+      </div>
+    </div>
+
     <!-- Settings modal: saved passwords -->
     <div class="settings-overlay" id="settingsOverlay" aria-hidden="true">
       <div class="settings-modal" id="settingsModal">

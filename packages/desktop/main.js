@@ -457,7 +457,8 @@ function handlePageShortcut(input, state) {
     return true
   }
   if (mod && key === 't') {
-    createTab(undefined, { isPrivate: state.isPrivate }, state)
+    state.win.webContents.focus()
+    state.win.webContents.send('shortcut-open-address-modal')
     return true
   }
   if (mod && input.shift && key === 'n') {
@@ -612,6 +613,10 @@ async function doCredVerify(tabId, view, state) {
 function updateBrowserViewBounds(state) {
   const view = getActiveView(state)
   if (!state?.win || !view) return
+  if (state.addressModalOpen) {
+    view.setBounds({ x: 0, y: 0, width: 0, height: 0 })
+    return
+  }
   const bounds = state.win.getContentBounds()
   const reserved = state.sidebarOpen ? state.sidebarWidth : 0
   const leftChrome = state.leftChromeWidth || 0
@@ -1014,6 +1019,7 @@ function createWindow(isPrivate = false) {
     leftChromeWidth: 0,
     contentTop: 128,
     findBarOpen: false,
+    addressModalOpen: false,
     pendingCredVerifyTabId: null,
     closedTabs: [], // last 15 closed tabs for reopen (url, title)
     lastModKeyTime: 0
@@ -1082,6 +1088,12 @@ ipcMain.on('reopen-closed-tab', (event) => {
   if (!state?.closedTabs?.length) return
   const { url } = state.closedTabs.pop()
   if (url) createTab(url, { isPrivate: state.isPrivate }, state)
+})
+
+ipcMain.handle('get-closed-tabs', (event) => {
+  const state = stateForEvent(event)
+  if (!state?.closedTabs?.length) return []
+  return [...state.closedTabs].reverse()
 })
 
 ipcMain.on('scroll-page', (event, where) => {
@@ -1224,6 +1236,16 @@ ipcMain.on('find-bar-open', (event) => {
 ipcMain.on('find-bar-closed', (event) => {
   const state = stateForEvent(event)
   if (state) { state.findBarOpen = false; updateBrowserViewBounds(state) }
+})
+
+ipcMain.on('address-modal-opened', (event) => {
+  const state = stateForEvent(event)
+  if (state) { state.addressModalOpen = true; updateBrowserViewBounds(state) }
+})
+
+ipcMain.on('address-modal-closed', (event) => {
+  const state = stateForEvent(event)
+  if (state) { state.addressModalOpen = false; updateBrowserViewBounds(state) }
 })
 
 ipcMain.on('hide-browser-view', (event) => {

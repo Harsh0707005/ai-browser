@@ -886,6 +886,127 @@ body.layout-sidebar .chrome-wrap.left-chrome-expanded .left-chrome-collapse-btn 
   color: #e0e0e0;
 }
 
+/* Address modal (Arc/Zen style) — shown in sidebar layout for Cmd/Ctrl+T and Cmd/Ctrl+L */
+.address-modal-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 100001;
+  background: rgba(0, 0, 0, 0.55);
+  backdrop-filter: blur(8px);
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  padding: 12vh 24px 0;
+  opacity: 0;
+  visibility: hidden;
+  transition: opacity 0.2s ease, visibility 0.2s ease;
+}
+
+.address-modal-overlay[aria-hidden="false"] {
+  opacity: 1;
+  visibility: visible;
+}
+
+.address-modal {
+  width: 100%;
+  max-width: 560px;
+  background: #252526;
+  border-radius: 12px;
+  border: 1px solid #383838;
+  box-shadow: 0 24px 48px rgba(0, 0, 0, 0.4);
+  overflow: hidden;
+}
+
+.address-modal-bar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 14px 18px;
+  border-bottom: 1px solid #333;
+}
+
+.address-modal-icon {
+  color: #888;
+  flex-shrink: 0;
+}
+
+.address-modal-input {
+  flex: 1;
+  border: none;
+  background: transparent;
+  outline: none;
+  font-size: 16px;
+  color: #e0e0e0;
+  font-family: inherit;
+}
+
+.address-modal-input::placeholder {
+  color: #666;
+}
+
+.address-modal-suggestions {
+  max-height: 320px;
+  overflow-y: auto;
+  padding: 6px 0;
+}
+
+.address-modal-suggestion {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 18px;
+  cursor: pointer;
+  color: #e0e0e0;
+  font-size: 14px;
+  border: none;
+  background: transparent;
+  width: 100%;
+  text-align: left;
+  font-family: inherit;
+}
+
+.address-modal-suggestion:hover,
+.address-modal-suggestion.selected {
+  background: #2d2d2d;
+}
+
+.address-modal-suggestion .suggestion-icon {
+  width: 20px;
+  height: 20px;
+  flex-shrink: 0;
+  color: #888;
+}
+
+.address-modal-suggestion .suggestion-label {
+  flex: 1;
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.address-modal-suggestion .suggestion-meta {
+  font-size: 12px;
+  color: #888;
+  flex-shrink: 0;
+}
+
+.address-modal-suggestion.search-action .suggestion-icon {
+  color: #14b8a6;
+}
+
+.address-modal-suggestion.go-action .suggestion-icon {
+  color: #22c55e;
+}
+
+.address-modal-suggestion.tab .suggestion-icon {
+  color: #6b9eff;
+}
+
+.address-modal-suggestion.closed-tab .suggestion-icon {
+  color: #a78bfa;
+}
+
 /* Sidebar - Dark Mode Aesthetic */
 .sidebar {
   --sidebar-width: 400px;
