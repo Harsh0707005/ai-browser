@@ -831,6 +831,8 @@ body.layout-sidebar .chrome-wrap .left-chrome-collapse-btn:hover {
   gap: 12px;
   border: 1px solid #383838;
   transition: all 0.2s;
+  position: relative;
+  overflow: hidden;
 }
 
 .address-bar:focus-within {
@@ -858,39 +860,39 @@ body.layout-sidebar .chrome-wrap .left-chrome-collapse-btn:hover {
   color: #666;
 }
 
-.loading-indicator {
-  flex-shrink: 0;
-  width: 16px;
-  height: 16px;
-  display: none;
-  align-items: center;
-  justify-content: center;
+/* Safari-style loading: horizontal line at bottom of address bar */
+.address-bar-loading {
+  position: absolute;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  height: 2px;
+  background: transparent;
   opacity: 0;
+  pointer-events: none;
   transition: opacity 0.2s ease;
 }
 
-.loading-indicator.visible {
-  display: flex;
+.address-bar-loading.visible {
   opacity: 1;
 }
 
-.loading-indicator .spinner {
-  width: 14px;
-  height: 14px;
-  border-width: 2px;
+.address-bar-loading-line {
+  position: absolute;
+  left: 0;
+  top: 0;
+  height: 100%;
+  width: 0;
+  background: #14b8a6;
+  transform-origin: left;
+  animation: address-bar-loading 1.4s ease-in-out infinite;
 }
 
-.spinner {
-  width: 16px;
-  height: 16px;
-  border: 2px solid rgba(20, 184, 166, 0.25);
-  border-top-color: #14b8a6;
-  border-radius: 50%;
-  animation: spin 0.7s linear infinite;
-}
-
-@keyframes spin {
-  to { transform: rotate(360deg); }
+@keyframes address-bar-loading {
+  0% { width: 0; opacity: 0.8; }
+  40% { width: 70%; opacity: 1; }
+  80% { width: 95%; opacity: 0.9; }
+  100% { width: 100%; opacity: 0; }
 }
 
 .find-bar {
@@ -1908,11 +1910,11 @@ body.settings-open.layout-sidebar .left-chrome-edge::before {
   background: #555;
 }
 
-/* Settings modal */
+/* Settings modal — above split bar, address modal, and all chrome */
 .settings-overlay {
   position: fixed;
   inset: 0;
-  z-index: 100000;
+  z-index: 200000;
   background: rgba(0, 0, 0, 0.6);
   backdrop-filter: blur(4px);
   display: none;
@@ -2884,23 +2886,24 @@ body.settings-open.layout-sidebar .left-chrome-edge::before {
 
 /* ── Split View ──────────────────────────────────────────────────────────────*/
 
-/* Tab indicators when in split group — same tint and visual grouping */
-.tab.split-tab {
-  border-left: 2px solid #14b8a6;
-  background: rgba(20, 184, 166, 0.06);
-}
-.tab.split-tab.split-tab-active {
-  border-left-color: #2dd4bf;
-  background: rgba(20, 184, 166, 0.12);
-}
-body.layout-sidebar .chrome-wrap .tab.split-tab {
-  border-left: 2px solid #14b8a6;
-  background: rgba(20, 184, 166, 0.06);
-}
-body.layout-sidebar .chrome-wrap .tab.split-tab.split-tab-active {
-  background: rgba(20, 184, 166, 0.12);
-  border-left-color: #2dd4bf;
-}
+/* Tab indicators when in split group — color per group so groups are distinguishable */
+.tab.split-tab { border-left: 2px solid; }
+.tab.split-tab.split-group-0 { border-left-color: #14b8a6; background: rgba(20, 184, 166, 0.06); }
+.tab.split-tab.split-group-1 { border-left-color: #f59e0b; background: rgba(245, 158, 11, 0.06); }
+.tab.split-tab.split-group-2 { border-left-color: #3b82f6; background: rgba(59, 130, 246, 0.06); }
+.tab.split-tab.split-group-3 { border-left-color: #8b5cf6; background: rgba(139, 92, 246, 0.06); }
+.tab.split-tab.split-tab-active.split-group-0 { border-left-color: #2dd4bf; background: rgba(20, 184, 166, 0.12); }
+.tab.split-tab.split-tab-active.split-group-1 { border-left-color: #fbbf24; background: rgba(245, 158, 11, 0.12); }
+.tab.split-tab.split-tab-active.split-group-2 { border-left-color: #60a5fa; background: rgba(59, 130, 246, 0.12); }
+.tab.split-tab.split-tab-active.split-group-3 { border-left-color: #a78bfa; background: rgba(139, 92, 246, 0.12); }
+body.layout-sidebar .chrome-wrap .tab.split-tab.split-group-0 { border-left-color: #14b8a6; background: rgba(20, 184, 166, 0.06); }
+body.layout-sidebar .chrome-wrap .tab.split-tab.split-group-1 { border-left-color: #f59e0b; background: rgba(245, 158, 11, 0.06); }
+body.layout-sidebar .chrome-wrap .tab.split-tab.split-group-2 { border-left-color: #3b82f6; background: rgba(59, 130, 246, 0.06); }
+body.layout-sidebar .chrome-wrap .tab.split-tab.split-group-3 { border-left-color: #8b5cf6; background: rgba(139, 92, 246, 0.06); }
+body.layout-sidebar .chrome-wrap .tab.split-tab.split-tab-active.split-group-0 { background: rgba(20, 184, 166, 0.12); border-left-color: #2dd4bf; }
+body.layout-sidebar .chrome-wrap .tab.split-tab.split-tab-active.split-group-1 { background: rgba(245, 158, 11, 0.12); border-left-color: #fbbf24; }
+body.layout-sidebar .chrome-wrap .tab.split-tab.split-tab-active.split-group-2 { background: rgba(59, 130, 246, 0.12); border-left-color: #60a5fa; }
+body.layout-sidebar .chrome-wrap .tab.split-tab.split-tab-active.split-group-3 { background: rgba(139, 92, 246, 0.12); border-left-color: #a78bfa; }
 
 /* First/last in split group — visual bracket */
 .tab.split-tab.split-tab-first { border-top-left-radius: 6px; border-bottom-left-radius: 6px; }
@@ -2911,21 +2914,23 @@ body.layout-sidebar .chrome-wrap .tab.split-tab.split-tab-active {
   width: 16px;
   height: 16px;
   border: none;
-  background: rgba(20, 184, 166, 0.15);
   border-radius: 3px;
   cursor: pointer;
   display: flex;
   align-items: center;
   justify-content: center;
-  color: #14b8a6;
   flex-shrink: 0;
   padding: 0;
   transition: background 0.15s, color 0.15s;
 }
-.tab-unsplit:hover {
-  background: rgba(20, 184, 166, 0.4);
-  color: #fff;
-}
+.tab.split-group-0 .tab-unsplit { background: rgba(20, 184, 166, 0.15); color: #14b8a6; }
+.tab.split-group-1 .tab-unsplit { background: rgba(245, 158, 11, 0.15); color: #f59e0b; }
+.tab.split-group-2 .tab-unsplit { background: rgba(59, 130, 246, 0.15); color: #3b82f6; }
+.tab.split-group-3 .tab-unsplit { background: rgba(139, 92, 246, 0.15); color: #8b5cf6; }
+.tab.split-group-0 .tab-unsplit:hover { background: rgba(20, 184, 166, 0.4); color: #fff; }
+.tab.split-group-1 .tab-unsplit:hover { background: rgba(245, 158, 11, 0.4); color: #fff; }
+.tab.split-group-2 .tab-unsplit:hover { background: rgba(59, 130, 246, 0.4); color: #fff; }
+.tab.split-group-3 .tab-unsplit:hover { background: rgba(139, 92, 246, 0.4); color: #fff; }
 
 /* Cursor while dragging a tab */
 body.tab-dragging,
@@ -3218,52 +3223,3 @@ body.tab-dragging * {
 .split-action-btn:hover { background: #2d2d2d; color: #e0e0e0; }
 .split-action-remove { border-color: rgba(239,68,68,0.3); color: #f87171; }
 .split-action-remove:hover { background: rgba(239,68,68,0.1); color: #fca5a5; }
-
-/* ── Split close bar ─────────────────────────────────────────────────────────*/
-.split-close-bar {
-  position: fixed;
-  bottom: 12px;
-  left: 50%;
-  transform: translateX(-50%) translateY(60px);
-  z-index: 100002;
-  background: #252526;
-  border: 1px solid #3a3a3a;
-  border-radius: 20px;
-  padding: 6px 14px;
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  box-shadow: 0 4px 20px rgba(0,0,0,0.5);
-  opacity: 0;
-  pointer-events: none;
-  transition: opacity 0.2s, transform 0.2s;
-}
-.split-close-bar.visible {
-  opacity: 1;
-  pointer-events: all;
-  transform: translateX(-50%) translateY(0);
-}
-.split-close-bar-label {
-  font-size: 11px;
-  color: #888;
-  font-weight: 500;
-}
-.split-close-bar-btn {
-  display: flex;
-  align-items: center;
-  gap: 5px;
-  padding: 4px 10px;
-  background: rgba(20, 184, 166, 0.15);
-  border: 1px solid rgba(20, 184, 166, 0.35);
-  border-radius: 12px;
-  cursor: pointer;
-  color: #14b8a6;
-  font-size: 11px;
-  transition: background 0.12s;
-}
-.split-close-bar-btn:hover {
-  background: rgba(20, 184, 166, 0.3);
-  color: #fff;
-}
-
-

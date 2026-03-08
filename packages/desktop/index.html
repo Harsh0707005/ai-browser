@@ -89,8 +89,8 @@
               placeholder="Search or enter website name"
               spellcheck="false"
             />
-            <div class="loading-indicator" id="loadingIndicator" aria-hidden="true">
-              <div class="spinner"></div>
+            <div class="address-bar-loading" id="loadingIndicator" aria-hidden="true">
+              <div class="address-bar-loading-line"></div>
             </div>
           </div>
         </div>
@@ -247,15 +247,6 @@
         </button>
       </div>
       <div class="split-hover-actions" id="splitHoverActions"></div>
-    </div>
-
-    <!-- Split close bar (shown when split is active) -->
-    <div class="split-close-bar" id="splitCloseBar" aria-hidden="true">
-      <span class="split-close-bar-label">Split view</span>
-      <button class="split-close-bar-btn" id="splitCloseBtn" title="Exit split view">
-        <svg width="12" height="12" viewBox="0 0 12 12" fill="none"><path d="M2 2L10 10M10 2L2 10" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>
-        Exit split
-      </button>
     </div>
 
     <!-- Address / command modal (Arc/Zen style, sidebar layout only) -->

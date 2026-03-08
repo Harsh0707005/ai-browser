@@ -664,20 +664,20 @@ function updateBrowserViewBounds(state) {
   const cw = bounds.width - leftChrome - reserved
   const ch = bounds.height - contentTop
 
-  // Show split view only when active tab is in the split group; otherwise single view
-  const activeTabInSplit = state.splitLayout && state.splitLayout.panes.some(p => p.tabId === state.activeTabId)
-  if (state.splitLayout && state.splitLayout.panes.length > 1 && activeTabInSplit) {
-    // Hide browser views when address modal is open
-    if (state.addressModalOpen) {
-      for (const pane of state.splitLayout.panes) {
+  // Show split view only when active tab is in a split group; otherwise single view
+  const activeGroup = getActiveGroup(state)
+  if (activeGroup && activeGroup.panes.length > 1) {
+    // Hide browser views when address or settings modal is open
+    if (state.addressModalOpen || state.settingsModalOpen) {
+      for (const pane of activeGroup.panes) {
         const tab = allTabs.get(pane.tabId)
         if (tab?.view) try { tab.view.setBounds({ x: 0, y: 0, width: 0, height: 0 }) } catch (_) {}
       }
       return
     }
 
-    // Remove any attached views that are no longer in the split
-    const splitTabIds = new Set(state.splitLayout.panes.map(p => p.tabId))
+    // Remove any attached views that are no longer in this group
+    const splitTabIds = new Set(activeGroup.panes.map(p => p.tabId))
     for (const view of state.win.getBrowserViews()) {
       let tid = null
       for (const [id, t] of allTabs) { if (t.view === view && t.winId === state.win.id) { tid = id; break } }
@@ -686,7 +686,7 @@ function updateBrowserViewBounds(state) {
       }
     }
 
-    for (const pane of state.splitLayout.panes) {
+    for (const pane of activeGroup.panes) {
       const tab = allTabs.get(pane.tabId)
       if (!tab?.view) continue
       const x = Math.round(cx + pane.fx * cw)
@@ -699,7 +699,7 @@ function updateBrowserViewBounds(state) {
       tab.view.setBounds({ x, y, width: w, height: h })
     }
   } else {
-    // ── Single-view mode (no split, or active tab is not in the split group) ─
+    // ── Single-view mode (no split group, or active tab is not in any group) ─
     const activeView = getActiveView(state)
     for (const view of state.win.getBrowserViews()) {
       if (view !== activeView) try { state.win.removeBrowserView(view) } catch (_) {}
@@ -707,7 +707,7 @@ function updateBrowserViewBounds(state) {
 
     const view = getActiveView(state)
     if (!view) return
-    if (state.addressModalOpen) {
+    if (state.addressModalOpen || state.settingsModalOpen) {
       view.setBounds({ x: 0, y: 0, width: 0, height: 0 })
       return
     }
@@ -748,7 +748,8 @@ function wireViewEvents(tabId, view, state) {
     if (handlePageShortcut(input, state)) event.preventDefault()
   })
 
-  view.webContents.on('did-start-loading', () => {
+  // Main-frame only: avoid loading bar for iframe/subresource loads (e.g. in split view)
+  view.webContents.on('will-navigate', () => {
     const tab = allTabs.get(tabId)
     if (tab && tab.loadingErrorPage) return
     if (tabId === state.activeTabId && state.win) {
@@ -1046,10 +1047,11 @@ function wireViewEvents(tabId, view, state) {
 
   // When user clicks inside a split pane's BrowserView, make that pane active
   view.webContents.on('focus', () => {
-    if (!state.splitLayout) return
-    const pane = state.splitLayout.panes.find(p => p.tabId === tabId)
-    if (pane && pane.paneId !== state.splitLayout.activePaneId) {
-      state.splitLayout.activePaneId = pane.paneId
+    const group = getGroupForTab(state, tabId)
+    if (!group) return
+    const pane = group.panes.find(p => p.tabId === tabId)
+    if (pane && pane.paneId !== group.activePaneId) {
+      group.activePaneId = pane.paneId
       state.activeTabId = tabId
       sendSplitLayoutUpdate(state)
       sendTabsUpdate(state)
@@ -1092,11 +1094,12 @@ function focusActiveView(state) {
 function switchTab(tabId, state) {
   if (!state.tabIds.has(tabId) || !state.win) return
 
-  if (state.splitLayout) {
-    const paneForTab = state.splitLayout.panes.find(p => p.tabId === tabId)
+  const groupForTab = getGroupForTab(state, tabId)
+  if (groupForTab) {
+    const paneForTab = groupForTab.panes.find(p => p.tabId === tabId)
     if (paneForTab) {
-      // Switching to a tab that's in the split group: show split view with this pane active
-      state.splitLayout.activePaneId = paneForTab.paneId
+      // Switching to a tab that's in this split group: show that group with this pane active
+      groupForTab.activePaneId = paneForTab.paneId
       state.activeTabId = tabId
       const tab = allTabs.get(tabId)
       if (tab) sendContentBackground(state, tab.view)
@@ -1111,34 +1114,13 @@ function switchTab(tabId, state) {
       focusActiveView(state)
       return
     }
-    // Switching to a tab that's not in the split: show that tab as single view, keep split group
-    state.activeTabId = tabId
-    for (const view of state.win.getBrowserViews()) {
-      try { state.win.removeBrowserView(view) } catch (_) {}
-    }
-    const tab = allTabs.get(tabId)
-    if (tab) {
-      state.win.addBrowserView(tab.view)
-      sendContentBackground(state, tab.view)
-    }
-    updateBrowserViewBounds(state)
-    sendTabsUpdate(state)
-    sendSplitLayoutUpdate(state)
-    state.win.webContents.send('url-changed', {
-      url: tab?.view.webContents.getURL() || tab?.url || '',
-      canGoBack: tab?.view.webContents.canGoBack() || false,
-      canGoForward: tab?.view.webContents.canGoForward() || false
-    })
-    focusActiveView(state)
-    return
   }
 
-  if (state.activeTabId && state.tabIds.has(state.activeTabId)) {
-    const prevTab = allTabs.get(state.activeTabId)
-    if (prevTab) state.win.removeBrowserView(prevTab.view)
-  }
-
+  // Switching to a tab that's not in any group (or single view): show that tab only
   state.activeTabId = tabId
+  for (const view of state.win.getBrowserViews()) {
+    try { state.win.removeBrowserView(view) } catch (_) {}
+  }
   const tab = allTabs.get(tabId)
   if (tab) {
     state.win.addBrowserView(tab.view)
@@ -1146,7 +1128,7 @@ function switchTab(tabId, state) {
   }
   updateBrowserViewBounds(state)
   sendTabsUpdate(state)
-
+  sendSplitLayoutUpdate(state)
   state.win.webContents.send('url-changed', {
     url: tab?.view.webContents.getURL() || tab?.url || '',
     canGoBack: tab?.view.webContents.canGoBack() || false,
@@ -1172,12 +1154,13 @@ function closeTab(tabId, state) {
   }
   state.tabIds.delete(tabId)
 
-  // If this tab was in the split group, remove it from panes; exit split if only 1 remains
-  if (state.splitLayout) {
-    const remaining = state.splitLayout.panes.filter(p => p.tabId !== tabId)
+  // If this tab was in a split group, remove it from that group
+  const group = getGroupForTab(state, tabId)
+  if (group) {
+    const remaining = group.panes.filter(p => p.tabId !== tabId)
     if (remaining.length <= 1) {
+      state.splitGroups = state.splitGroups.filter(g => g.groupId !== group.groupId)
       state.win.getBrowserViews().forEach(v => { try { state.win.removeBrowserView(v) } catch (_) {} })
-      state.splitLayout = null
       const keepTabId = remaining[0]?.tabId
       if (keepTabId != null) {
         state.activeTabId = keepTabId
@@ -1192,10 +1175,10 @@ function closeTab(tabId, state) {
         }
       }
     } else {
-      state.splitLayout.panes = redistributeEvenly(remaining)
-      if (!state.splitLayout.panes.find(p => p.paneId === state.splitLayout.activePaneId)) {
-        state.splitLayout.activePaneId = state.splitLayout.panes[0].paneId
-        state.activeTabId = state.splitLayout.panes[0].tabId
+      group.panes = redistributeEvenly(remaining)
+      if (!group.panes.find(p => p.paneId === group.activePaneId)) {
+        group.activePaneId = group.panes[0].paneId
+        state.activeTabId = group.panes[0].tabId
       }
     }
     updateBrowserViewBounds(state)
@@ -1249,10 +1232,11 @@ function createWindow(isPrivate = false) {
     contentTop: 128,
     findBarOpen: false,
     addressModalOpen: false,
+    settingsModalOpen: false,
     pendingCredVerifyTabId: null,
     closedTabs: [], // last 15 closed tabs for reopen (url, title)
     lastModKeyTime: 0,
-    splitLayout: null,   // { panes: [{paneId, tabId, fx, fy, fw, fh}], activePaneId } or null
+    splitGroups: [],     // [{ groupId, panes: [{paneId, tabId, fx, fy, fw, fh}], activePaneId }, ...]
     tabDragging: false   // true while a tab is being dragged (BrowserViews hidden)
   }
   winStates.set(win.id, state)
@@ -1479,6 +1463,16 @@ ipcMain.on('address-modal-opened', (event) => {
 ipcMain.on('address-modal-closed', (event) => {
   const state = stateForEvent(event)
   if (state) { state.addressModalOpen = false; updateBrowserViewBounds(state) }
+})
+
+ipcMain.on('settings-modal-opened', (event) => {
+  const state = stateForEvent(event)
+  if (state) { state.settingsModalOpen = true; updateBrowserViewBounds(state) }
+})
+
+ipcMain.on('settings-modal-closed', (event) => {
+  const state = stateForEvent(event)
+  if (state) { state.settingsModalOpen = false; updateBrowserViewBounds(state) }
 })
 
 ipcMain.on('hide-browser-view', (event) => {
@@ -1846,13 +1840,29 @@ ipcMain.handle('whatsapp-disconnect', async () => {
   return { success: true }
 })
 
-// ── Split View ───────────────────────────────────────────────────────────────
+// ── Split View (multiple independent groups) ───────────────────────────────────
 let _splitPaneCounter = 0
+let _splitGroupCounter = 0
 function newPaneId() { return `sp${++_splitPaneCounter}` }
+function newGroupId() { return `sg${++_splitGroupCounter}` }
+
+function getGroupForTab(state, tabId) {
+  if (!state?.splitGroups?.length) return null
+  return state.splitGroups.find(g => g.panes.some(p => p.tabId === tabId)) || null
+}
+
+function getActiveGroup(state) {
+  if (!state?.activeTabId) return null
+  return getGroupForTab(state, state.activeTabId)
+}
 
 function sendSplitLayoutUpdate(state) {
   if (!state?.win) return
-  state.win.webContents.send('split-layout-changed', state.splitLayout)
+  const activeGroup = getActiveGroup(state)
+  state.win.webContents.send('split-layout-changed', {
+    splitGroups: state.splitGroups,
+    activeGroupId: activeGroup ? activeGroup.groupId : null
+  })
 }
 
 // Redistribute N remaining panes into equal-sized slots.
@@ -1976,9 +1986,16 @@ ipcMain.handle('apply-split-layout', (event, { sourceTabId, side, targetPaneId, 
       ]
     } else return
     if (!panes) return
-    // Remove all existing views so we start clean
+    // Remove these tabs from any existing groups (each tab belongs to at most one group)
+    const tabIdsInPreset = [...new Set(panes.map(p => p.tabId))]
+    for (const g of state.splitGroups) {
+      g.panes = g.panes.filter(p => !tabIdsInPreset.includes(p.tabId))
+      if (g.panes.length <= 1) state.splitGroups = state.splitGroups.filter(x => x.groupId !== g.groupId)
+    }
+    state.splitGroups = state.splitGroups.filter(g => g.panes.length > 1)
+    const newGroup = { groupId: newGroupId(), panes, activePaneId: panes[0].paneId }
+    state.splitGroups.push(newGroup)
     state.win.getBrowserViews().forEach(v => { try { state.win.removeBrowserView(v) } catch (_) {} })
-    state.splitLayout = { panes, activePaneId: panes[0].paneId }
     state.activeTabId = panes[0].tabId
     updateBrowserViewBounds(state)
     sendTabsUpdate(state)
@@ -1993,8 +2010,14 @@ ipcMain.handle('apply-split-layout', (event, { sourceTabId, side, targetPaneId, 
   if (quadrantSides.includes(effectiveSide)) {
     const panes = build2x2WithQuadrant(sourceTabId, effectiveSide, state)
     if (!panes) return
+    const tabIdsInPreset = [...new Set(panes.map(p => p.tabId))]
+    for (const g of state.splitGroups) {
+      g.panes = g.panes.filter(p => !tabIdsInPreset.includes(p.tabId))
+    }
+    state.splitGroups = state.splitGroups.filter(g => g.panes.length > 1)
+    const newGroup = { groupId: newGroupId(), panes, activePaneId: panes[0].paneId }
+    state.splitGroups.push(newGroup)
     state.win.getBrowserViews().forEach(v => { try { state.win.removeBrowserView(v) } catch (_) {} })
-    state.splitLayout = { panes, activePaneId: panes[0].paneId }
     state.activeTabId = sourceTabId
     updateBrowserViewBounds(state)
     sendTabsUpdate(state)
@@ -2002,41 +2025,49 @@ ipcMain.handle('apply-split-layout', (event, { sourceTabId, side, targetPaneId, 
     return
   }
 
-  // When split exists but no targetPaneId, pick the pane on the dropped edge (add tab there, VSCode-style)
-  let effectiveTargetPaneId = targetPaneId
-  if (state.splitLayout && !effectiveTargetPaneId && quadrantSides.indexOf(effectiveSide) < 0) {
-    const edgePane = pickPaneIdForSide(state.splitLayout, effectiveSide)
-    if (edgePane) effectiveTargetPaneId = edgePane.paneId
-  }
-
-  if (!state.splitLayout) {
-    // No split yet: fresh 2-pane with current tab (left/right/top/bottom)
-    const currentTabId = state.activeTabId
-    const panes = buildTwoPaneSplit(sourceTabId, currentTabId, effectiveSide)
-    if (!panes) return
-    state.win.getBrowserViews().forEach(v => { try { state.win.removeBrowserView(v) } catch (_) {} })
-    state.splitLayout = { panes, activePaneId: panes.find(p => p.tabId === sourceTabId)?.paneId || panes[0].paneId }
-    state.activeTabId = sourceTabId
-  } else {
-    // Add to split: sub-split the pane on that edge so the dragged tab becomes a new pane
-    const targetPane = state.splitLayout.panes.find(p => p.paneId === effectiveTargetPaneId)
+  const sourceGroup = getGroupForTab(state, sourceTabId)
+  if (sourceGroup) {
+    // Add to existing group: pick pane on the dropped edge from this group
+    let effectiveTargetPaneId = targetPaneId
+    if (!effectiveTargetPaneId) {
+      const edgePane = pickPaneIdForSide(sourceGroup, effectiveSide)
+      if (edgePane) effectiveTargetPaneId = edgePane.paneId
+    }
+    const targetPane = sourceGroup.panes.find(p => p.paneId === effectiveTargetPaneId)
     if (!targetPane) return
     const newId = newPaneId()
     const { fx, fy, fw, fh } = targetPane
     if (effectiveSide === 'left') {
-      state.splitLayout.panes.push({ paneId: newId, tabId: sourceTabId, fx, fy, fw: fw / 2, fh })
+      sourceGroup.panes.push({ paneId: newId, tabId: sourceTabId, fx, fy, fw: fw / 2, fh })
       targetPane.fx += fw / 2; targetPane.fw = fw / 2
     } else if (effectiveSide === 'right') {
-      state.splitLayout.panes.push({ paneId: newId, tabId: sourceTabId, fx: fx + fw / 2, fy, fw: fw / 2, fh })
+      sourceGroup.panes.push({ paneId: newId, tabId: sourceTabId, fx: fx + fw / 2, fy, fw: fw / 2, fh })
       targetPane.fw = fw / 2
     } else if (effectiveSide === 'top') {
-      state.splitLayout.panes.push({ paneId: newId, tabId: sourceTabId, fx, fy, fw, fh: fh / 2 })
+      sourceGroup.panes.push({ paneId: newId, tabId: sourceTabId, fx, fy, fw, fh: fh / 2 })
       targetPane.fy += fh / 2; targetPane.fh = fh / 2
     } else if (effectiveSide === 'bottom') {
-      state.splitLayout.panes.push({ paneId: newId, tabId: sourceTabId, fx, fy: fy + fh / 2, fw, fh: fh / 2 })
+      sourceGroup.panes.push({ paneId: newId, tabId: sourceTabId, fx, fy: fy + fh / 2, fw, fh: fh / 2 })
       targetPane.fh = fh / 2
     } else return
-    state.splitLayout.activePaneId = newId
+    sourceGroup.activePaneId = newId
+    state.activeTabId = sourceTabId
+  } else {
+    // Source tab not in any group: create a new independent split group (2-pane)
+    const otherTabId = (state.activeTabId !== sourceTabId && !getGroupForTab(state, state.activeTabId))
+      ? state.activeTabId
+      : [...state.tabIds].find(id => id !== sourceTabId && !getGroupForTab(state, id))
+    if (otherTabId == null) return
+    const panes = buildTwoPaneSplit(sourceTabId, otherTabId, effectiveSide)
+    if (!panes) return
+    const tabIdsInNew = [sourceTabId, otherTabId]
+    for (const g of state.splitGroups) {
+      g.panes = g.panes.filter(p => !tabIdsInNew.includes(p.tabId))
+    }
+    state.splitGroups = state.splitGroups.filter(g => g.panes.length > 1)
+    const newGroup = { groupId: newGroupId(), panes, activePaneId: panes.find(p => p.tabId === sourceTabId)?.paneId || panes[0].paneId }
+    state.splitGroups.push(newGroup)
+    state.win.getBrowserViews().forEach(v => { try { state.win.removeBrowserView(v) } catch (_) {} })
     state.activeTabId = sourceTabId
   }
 
@@ -2047,26 +2078,24 @@ ipcMain.handle('apply-split-layout', (event, { sourceTabId, side, targetPaneId, 
 
 ipcMain.handle('remove-from-split', (event, tabId) => {
   const state = stateForEvent(event) || splitHoverPopupOwnerState
-  if (!state?.splitLayout) return
+  const group = state ? getGroupForTab(state, tabId) : null
+  if (!state?.win || !group) return
   state.tabDragging = false
 
-  const remaining = state.splitLayout.panes.filter(p => p.tabId !== tabId)
+  const remaining = group.panes.filter(p => p.tabId !== tabId)
 
   if (remaining.length <= 1) {
-    // Only 1 (or 0) panes left → exit split entirely
+    state.splitGroups = state.splitGroups.filter(g => g.groupId !== group.groupId)
     state.win.getBrowserViews().forEach(v => { try { state.win.removeBrowserView(v) } catch (_) {} })
-    state.splitLayout = null
     const keepTabId = remaining[0]?.tabId || state.activeTabId
     state.activeTabId = keepTabId
     const tab = allTabs.get(keepTabId)
     if (tab) state.win.addBrowserView(tab.view)
   } else {
-    // Redistribute remaining panes into equal-sized slots
-    const rebalanced = redistributeEvenly(remaining)
-    state.splitLayout.panes = rebalanced
-    if (!rebalanced.find(p => p.paneId === state.splitLayout.activePaneId)) {
-      state.splitLayout.activePaneId = rebalanced[0].paneId
-      state.activeTabId = rebalanced[0].tabId
+    group.panes = redistributeEvenly(remaining)
+    if (!group.panes.find(p => p.paneId === group.activePaneId)) {
+      group.activePaneId = group.panes[0].paneId
+      state.activeTabId = group.panes[0].tabId
     }
   }
 
@@ -2079,8 +2108,11 @@ ipcMain.handle('close-split', (event) => {
   const state = stateForEvent(event) || splitHoverPopupOwnerState
   if (!state) return
   state.tabDragging = false
+  const activeGroup = getActiveGroup(state)
+  if (activeGroup) {
+    state.splitGroups = state.splitGroups.filter(g => g.groupId !== activeGroup.groupId)
+  }
   state.win.getBrowserViews().forEach(v => { try { state.win.removeBrowserView(v) } catch (_) {} })
-  state.splitLayout = null
   const tab = allTabs.get(state.activeTabId)
   if (tab) state.win.addBrowserView(tab.view)
   updateBrowserViewBounds(state)
@@ -2112,10 +2144,11 @@ ipcMain.on('show-split-hover-popup', (event, { left, top, tabId }) => {
   splitHoverPopupOwnerWebContents = mainWin.webContents
 
   const sendOptionsAndShow = () => {
+    const group = getGroupForTab(state, tabId)
     const opts = {
       tabId,
-      showRemove: state.splitLayout && state.splitLayout.panes.some(p => p.tabId === tabId),
-      showExit: state.splitLayout && state.splitLayout.panes.length > 1
+      showRemove: !!group,
+      showExit: !!(group && group.panes.length > 1)
     }
     splitHoverPopupWindow.webContents.send('split-popup-options', opts)
     const bounds = mainWin.getContentBounds()
@@ -2255,13 +2288,16 @@ ipcMain.on('tab-drag-end', (event) => {
 
 ipcMain.on('set-active-split-pane', (event, paneId) => {
   const state = stateForEvent(event)
-  if (!state?.splitLayout) return
-  const pane = state.splitLayout.panes.find(p => p.paneId === paneId)
-  if (pane) {
-    state.splitLayout.activePaneId = paneId
-    state.activeTabId = pane.tabId
-    sendSplitLayoutUpdate(state)
-    sendTabsUpdate(state)
+  if (!state?.splitGroups?.length) return
+  for (const group of state.splitGroups) {
+    const pane = group.panes.find(p => p.paneId === paneId)
+    if (pane) {
+      group.activePaneId = paneId
+      state.activeTabId = pane.tabId
+      sendSplitLayoutUpdate(state)
+      sendTabsUpdate(state)
+      break
+    }
   }
 })
 

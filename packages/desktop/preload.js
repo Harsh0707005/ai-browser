@@ -74,6 +74,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
   onShortcutOpenFind: (cb) => ipcRenderer.on('shortcut-open-find', cb),
   addressModalOpened: () => ipcRenderer.send('address-modal-opened'),
   addressModalClosed: () => ipcRenderer.send('address-modal-closed'),
+  settingsModalOpened: () => ipcRenderer.send('settings-modal-opened'),
+  settingsModalClosed: () => ipcRenderer.send('settings-modal-closed'),
 
   whatsappGetStatus: () => ipcRenderer.invoke('whatsapp-get-status'),
   whatsappConnect: () => ipcRenderer.invoke('whatsapp-connect'),

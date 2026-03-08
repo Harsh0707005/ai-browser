@@ -57,7 +57,9 @@ let agentRunning = false
 let agentAbortRequested = false
 
 // ── Split view state ──────────────────────────────────────────────────────────
-let splitLayout = null        // mirrors main-process splitLayout
+let splitLayout = null        // active group layout (for current view)
+let splitGroups = []          // all groups from main
+let activeGroupId = null      // which group is currently shown
 let isDraggingTab = false
 let dragTabId = null
 let dragStartX = 0, dragStartY = 0
@@ -188,7 +190,7 @@ document.querySelectorAll('.settings-tab').forEach(tab => {
 // ── Settings / Saved passwords ─────────────────────────────────────────────
 function openSettings(tab) {
   if (!settingsOverlay) return
-  if (window.electronAPI) window.electronAPI.hideBrowserView()
+  if (window.electronAPI) window.electronAPI.settingsModalOpened()
   document.body.classList.add('settings-open')
   settingsOverlay.setAttribute('aria-hidden', 'false')
   const activeTab = tab || 'passwords'
@@ -207,7 +209,7 @@ function closeSettings() {
   if (!settingsOverlay) return
   document.body.classList.remove('settings-open')
   settingsOverlay.setAttribute('aria-hidden', 'true')
-  if (window.electronAPI) window.electronAPI.showBrowserView()
+  if (window.electronAPI) window.electronAPI.settingsModalClosed()
 }
 
 // Appearance: layout selection (sidebar vs classic). Sidebar = Arc/Zen style left chrome.
@@ -1693,25 +1695,28 @@ function updateNavigationButtons(canGoBack, canGoForward) {
   forwardBtn.disabled = !canGoForward
 }
 
+const LOADING_BAR_DELAY_MS = 180  // only show bar if load takes longer (avoids flash for cached/instant)
+let loadingBarShowTimer = null
+let loadingBarVisible = false
+
 function showLoading(show) {
   if (!loadingIndicator) return
   if (show) {
-    loadingIndicator.classList.add('visible')
-    loadingIndicator.style.display = 'flex'
-    loadingIndicator.style.opacity = ''
-    requestAnimationFrame(() => { loadingIndicator.style.opacity = '1' })
+    if (loadingBarShowTimer) clearTimeout(loadingBarShowTimer)
+    if (loadingBarVisible) return
+    loadingBarShowTimer = setTimeout(() => {
+      loadingBarShowTimer = null
+      loadingBarVisible = true
+      loadingIndicator.classList.add('visible')
+    }, LOADING_BAR_DELAY_MS)
   } else {
-    loadingIndicator.style.opacity = '0'
-    let done = false
-    const hide = () => {
-      if (done) return
-      done = true
-      loadingIndicator.classList.remove('visible')
-      loadingIndicator.style.display = 'none'
-      loadingIndicator.style.opacity = ''
+    if (loadingBarShowTimer) {
+      clearTimeout(loadingBarShowTimer)
+      loadingBarShowTimer = null
     }
-    loadingIndicator.addEventListener('transitionend', hide, { once: true })
-    setTimeout(hide, 220)
+    if (!loadingBarVisible) return
+    loadingBarVisible = false
+    loadingIndicator.classList.remove('visible')
   }
 }
 
@@ -1745,6 +1750,7 @@ if (window.electronAPI) {
   window.electronAPI.onNavigationError(() => { showLoading(false) })
 
   window.electronAPI.onUrlChanged((data) => {
+    showLoading(false)
     if (typeof data === 'string') updateAddressBar(data)
     else {
       updateAddressBar(data.url)
@@ -1857,13 +1863,19 @@ function renderTabs() {
     if (tab.id === activeTabId) cls += ' active'
     if (agentTabIds.has(tab.id)) cls += ' agent-tab'
 
-    const isInSplit = splitLayout && splitLayout.panes.some(p => p.tabId === tab.id)
-    const isActiveSplitTab = isInSplit && splitLayout.panes.find(p => p.paneId === splitLayout.activePaneId)?.tabId === tab.id
+    const groupIndex = splitGroups.findIndex(g => g.panes.some(p => p.tabId === tab.id))
+    const isInSplit = groupIndex >= 0
+    const activeGroup = activeGroupId ? splitGroups.find(g => g.groupId === activeGroupId) : null
+    const isActiveSplitTab = activeGroup && activeGroup.panes.some(p => p.tabId === tab.id) &&
+      activeGroup.panes.find(p => p.paneId === activeGroup.activePaneId)?.tabId === tab.id
     if (isInSplit) {
       cls += ' split-tab'
-      const paneIndex = splitLayout.panes.findIndex(p => p.tabId === tab.id)
-      if (paneIndex === 0) cls += ' split-tab-first'
-      if (paneIndex === splitLayout.panes.length - 1) cls += ' split-tab-last'
+      cls += ` split-group-${groupIndex % 4}`
+      if (activeGroup && activeGroup.panes.some(p => p.tabId === tab.id)) {
+        const paneIndex = activeGroup.panes.findIndex(p => p.tabId === tab.id)
+        if (paneIndex === 0) cls += ' split-tab-first'
+        if (paneIndex === activeGroup.panes.length - 1) cls += ' split-tab-last'
+      }
     }
     if (isActiveSplitTab) cls += ' split-tab-active'
 
@@ -1946,7 +1958,6 @@ function renderTabs() {
     tabList.appendChild(el)
   })
   updateAgentOverlay()
-  updateSplitCloseBar()
 }
 
 newTabBtn.addEventListener('click', () => {
@@ -2799,8 +2810,6 @@ function renderWaPanel(status, data = {}) {
 const dropZoneOverlay  = document.getElementById('dropZoneOverlay')
 const splitHoverPopup  = document.getElementById('splitHoverPopup')
 const splitHoverActions = document.getElementById('splitHoverActions')
-const splitCloseBar    = document.getElementById('splitCloseBar')
-const splitCloseBtn    = document.getElementById('splitCloseBtn')
 
 // Position the drop-zone overlay over the browser content area
 function positionDropOverlay() {
@@ -2944,24 +2953,18 @@ document.addEventListener('keydown', (e) => {
   if (e.key === 'Escape') { hideSplitHoverPopup(); hideDropZoneOverlay() }
 })
 
-// ── Split close bar ──────────────────────────────────────────────────────────
-function updateSplitCloseBar() {
-  if (!splitCloseBar) return
-  const hasSplit = splitLayout && splitLayout.panes.length > 1
-  splitCloseBar.setAttribute('aria-hidden', hasSplit ? 'false' : 'true')
-  splitCloseBar.classList.toggle('visible', !!hasSplit)
-}
-
-if (splitCloseBtn) {
-  splitCloseBtn.addEventListener('click', () => {
-    if (window.electronAPI) window.electronAPI.closeSplit()
-  })
-}
-
 // ── Listen for split layout changes from main process ────────────────────────
 if (window.electronAPI?.onSplitLayoutChanged) {
-  window.electronAPI.onSplitLayoutChanged((layout) => {
-    splitLayout = layout
+  window.electronAPI.onSplitLayoutChanged((payload) => {
+    if (payload && typeof payload === 'object' && Array.isArray(payload.splitGroups)) {
+      splitGroups = payload.splitGroups || []
+      activeGroupId = payload.activeGroupId ?? null
+      splitLayout = activeGroupId ? (splitGroups.find(g => g.groupId === activeGroupId) || null) : null
+    } else {
+      splitLayout = payload
+      splitGroups = []
+      activeGroupId = null
+    }
     renderTabs()
   })
 }
