@@ -811,7 +811,149 @@ sidebarResizeHandle.addEventListener('mousedown', (e) => {
   })
 })()
 
+// --- Contact Autocomplete ---
+let autocompleteContacts = []
+let autocompleteSelectedIndex = -1
+let isAutocompleteOpen = false
+let autocompleteMatchStart = -1
+let autocompleteMatchEnd = -1
+
+const contactAutocomplete = document.getElementById('contactAutocomplete')
+
+function hideAutocomplete() {
+  if (!contactAutocomplete) return
+  isAutocompleteOpen = false
+  contactAutocomplete.hidden = true
+  autocompleteContacts = []
+  autocompleteSelectedIndex = -1
+}
+
+function applyAutocomplete(contact) {
+  if (autocompleteMatchStart === -1 || !contact) return
+  const val = chatInput.value
+  const before = val.substring(0, autocompleteMatchStart)
+  const after = val.substring(autocompleteMatchEnd)
+  const insertText = contact.name
+  chatInput.value = before + insertText + after
+  chatInput.focus()
+  chatInput.selectionStart = chatInput.selectionEnd = before.length + insertText.length
+  hideAutocomplete()
+  chatInput.dispatchEvent(new Event('input'))
+}
+
+function updateAutocompleteSelection() {
+  if (!contactAutocomplete) return
+  const items = contactAutocomplete.querySelectorAll('.chat-autocomplete-item')
+  items.forEach((item, i) => {
+    item.classList.toggle('selected', i === autocompleteSelectedIndex)
+    if (i === autocompleteSelectedIndex) {
+      item.scrollIntoView({ block: 'nearest' })
+    }
+  })
+}
+
+function renderAutocomplete() {
+  if (!contactAutocomplete) return
+  contactAutocomplete.innerHTML = ''
+  if (autocompleteContacts.length === 0) {
+    hideAutocomplete()
+    return
+  }
+  
+  isAutocompleteOpen = true
+  contactAutocomplete.hidden = false
+  if (autocompleteSelectedIndex >= autocompleteContacts.length) {
+    autocompleteSelectedIndex = 0
+  }
+  if (autocompleteSelectedIndex < 0) {
+    autocompleteSelectedIndex = 0
+  }
+  
+  autocompleteContacts.forEach((c, i) => {
+    const item = document.createElement('div')
+    item.className = 'chat-autocomplete-item'
+    if (i === autocompleteSelectedIndex) item.classList.add('selected')
+    
+    const avatar = document.createElement('div')
+    avatar.className = 'chat-autocomplete-avatar'
+    avatar.textContent = (c.name || '?').charAt(0).toUpperCase()
+    
+    const nameStr = document.createElement('div')
+    nameStr.className = 'chat-autocomplete-name'
+    nameStr.textContent = c.name
+    
+    item.appendChild(avatar)
+    item.appendChild(nameStr)
+    
+    item.addEventListener('click', () => {
+      applyAutocomplete(c)
+    })
+    
+    contactAutocomplete.appendChild(item)
+  })
+}
+
+chatInput.addEventListener('input', async () => {
+  const val = chatInput.value
+  const cur = chatInput.selectionStart
+  if (cur === undefined || cur === null) return
+  
+  let matchStr = null
+  let matchStart = -1
+  for (let i = cur - 1; i >= 0; i--) {
+    if (val[i] === undefined) break; // defensive
+    if (val[i] === '/') {
+      matchStart = i
+      break
+    }
+    if (val[i].match(/\s/)) {
+      break
+    }
+  }
+
+  if (matchStart !== -1) {
+    matchStr = val.substring(matchStart + 1, cur).toLowerCase()
+    if (window.electronAPI && window.electronAPI.getAllContacts) {
+      const contacts = await window.electronAPI.getAllContacts()
+      autocompleteContacts = contacts.filter(c => c.name && c.name.toLowerCase().includes(matchStr))
+      if (autocompleteContacts.length > 0) {
+        autocompleteMatchStart = matchStart
+        autocompleteMatchEnd = cur
+        renderAutocomplete()
+        return
+      }
+    }
+  }
+  
+  hideAutocomplete()
+})
+
 chatInput.addEventListener('keydown', (e) => {
+  if (isAutocompleteOpen) {
+    if (e.key === 'ArrowDown') {
+      e.preventDefault()
+      autocompleteSelectedIndex = (autocompleteSelectedIndex + 1) % autocompleteContacts.length
+      updateAutocompleteSelection()
+      return
+    }
+    if (e.key === 'ArrowUp') {
+      e.preventDefault()
+      autocompleteSelectedIndex = (autocompleteSelectedIndex - 1 + autocompleteContacts.length) % autocompleteContacts.length
+      updateAutocompleteSelection()
+      return
+    }
+    if (e.key === 'Enter') {
+      e.preventDefault()
+      applyAutocomplete(autocompleteContacts[autocompleteSelectedIndex])
+      return
+    }
+    if (e.key === 'Escape') {
+      e.preventDefault()
+      hideAutocomplete()
+      return
+    }
+  }
+
   if (e.key === 'Enter' && !e.shiftKey) {
     e.preventDefault()
     sendChatMessage()

@@ -3223,3 +3223,59 @@ body.tab-dragging * {
 .split-action-btn:hover { background: #2d2d2d; color: #e0e0e0; }
 .split-action-remove { border-color: rgba(239,68,68,0.3); color: #f87171; }
 .split-action-remove:hover { background: rgba(239,68,68,0.1); color: #fca5a5; }
+
+/* Autocomplete Popup */
+.chat-autocomplete-popup {
+  position: absolute;
+  bottom: 100%;
+  left: 16px;
+  right: 16px;
+  margin-bottom: 8px;
+  background: var(--content-bg, #1e1e1e);
+  border: 1px solid var(--chrome-border, #333);
+  border-radius: 8px;
+  box-shadow: 0 -4px 12px rgba(0,0,0,0.3);
+  max-height: 200px;
+  overflow-y: auto;
+  z-index: 1000;
+}
+
+.chat-autocomplete-popup[hidden] {
+  display: none !important;
+}
+
+.chat-autocomplete-item {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 12px;
+  cursor: pointer;
+  border-bottom: 1px solid var(--chrome-border, #333);
+}
+
+.chat-autocomplete-item:last-child {
+  border-bottom: none;
+}
+
+.chat-autocomplete-item.selected,
+.chat-autocomplete-item:hover {
+  background: var(--chrome-hover-bg, #2d2d2d);
+}
+
+.chat-autocomplete-avatar {
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  background: #14b8a6;
+  color: #fff;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 11px;
+  font-weight: bold;
+}
+
+.chat-autocomplete-name {
+  font-size: 13px;
+  color: var(--chrome-fg, #e0e0e0);
+}
