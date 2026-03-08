@@ -1490,9 +1490,15 @@ function buildAppMenu() {
 
 // ── WhatsApp Service ──────────────────────────────────────────────────────────
 const QRCode = require('qrcode')
+const { EventEmitter } = require('events')
+const waEvents = new EventEmitter()
 let waSock = null
 let waStatus = 'disconnected' // 'disconnected' | 'qr' | 'connecting' | 'connected'
 let waPhone = null
+let waIntentionalClose = false
+let waIdleTimer = null
+// Connect only on send (via connectAndWait); disconnect a few seconds after last send
+const IDLE_DISCONNECT_MS = 8_000
 
 const waNoopLogger = {
   level: 'silent',
@@ -1513,13 +1519,49 @@ function waSessionExists() {
 }
 
 function sendWaStatusToAll(data) {
+  const payload = { ...data, sessionExists: waSessionExists() }
+  waEvents.emit('status', payload)
   BrowserWindow.getAllWindows().forEach(win => {
-    try { if (!win.isDestroyed()) win.webContents.send('whatsapp-status', data) } catch (_) {}
+    try { if (!win.isDestroyed()) win.webContents.send('whatsapp-status', payload) } catch (_) {}
+  })
+}
+
+function resetIdleTimer() {
+  if (waIdleTimer) clearTimeout(waIdleTimer)
+  waIdleTimer = setTimeout(() => {
+    if (waSock && waStatus === 'connected') {
+      waIntentionalClose = true
+      try { waSock.end(undefined) } catch (_) {}
+    }
+  }, IDLE_DISCONNECT_MS)
+}
+
+// Connects (if not already) and resolves when 'connected', rejects on timeout/failure
+function connectAndWait(timeoutMs = 20000) {
+  if (waStatus === 'connected') return Promise.resolve()
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => {
+      waEvents.removeListener('status', handler)
+      reject(new Error('Connection timed out'))
+    }, timeoutMs)
+    function handler(data) {
+      if (data.status === 'connected') {
+        clearTimeout(timer)
+        waEvents.removeListener('status', handler)
+        resolve()
+      } else if (data.status === 'disconnected') {
+        clearTimeout(timer)
+        waEvents.removeListener('status', handler)
+        reject(new Error('Connection failed'))
+      }
+    }
+    waEvents.on('status', handler)
+    connectWhatsApp()
   })
 }
 
 async function connectWhatsApp() {
-  if (waSock) return
+  if (waSock || waStatus === 'connecting') return
   try {
     const { default: makeWASocket, useMultiFileAuthState, DisconnectReason, fetchLatestBaileysVersion } = await import('baileys')
     const { Boom } = await import('@hapi/boom')
@@ -1552,11 +1594,14 @@ async function connectWhatsApp() {
       if (connection === 'close') {
         const code = new Boom(lastDisconnect?.error)?.output?.statusCode
         const loggedOut = code === DisconnectReason.loggedOut
+        const wasIntentional = waIntentionalClose
         waSock = null
         waStatus = 'disconnected'
         waPhone = null
+        waIntentionalClose = false
+        if (waIdleTimer) { clearTimeout(waIdleTimer); waIdleTimer = null }
         sendWaStatusToAll({ status: 'disconnected' })
-        if (!loggedOut) setTimeout(connectWhatsApp, 3000)
+        // Do not auto-reconnect: only connect when user intends to send (send-message or Connect button)
       }
 
       if (connection === 'open') {
@@ -1564,6 +1609,7 @@ async function connectWhatsApp() {
         const id = waSock.user?.id || ''
         waPhone = id.split(':')[0] || id.split('@')[0] || ''
         sendWaStatusToAll({ status: 'connected', phone: waPhone })
+        resetIdleTimer() // Start idle timer so we disconnect after a few seconds if no further sends
       }
     })
   } catch (e) {
@@ -1574,7 +1620,7 @@ async function connectWhatsApp() {
   }
 }
 
-ipcMain.handle('whatsapp-get-status', () => ({ status: waStatus, phone: waPhone }))
+ipcMain.handle('whatsapp-get-status', () => ({ status: waStatus, phone: waPhone, sessionExists: waSessionExists() }))
 
 
 ipcMain.handle('whatsapp-connect', async () => {
@@ -1583,11 +1629,17 @@ ipcMain.handle('whatsapp-connect', async () => {
 })
 
 ipcMain.handle('whatsapp-send-message', async (_event, phone, message) => {
+  // Lazily connect if a session exists but socket is not up
+  if (waStatus !== 'connected') {
+    if (!waSessionExists()) return { success: false, needsQR: true, error: 'WhatsApp not connected' }
+    try { await connectAndWait() } catch (e) { return { success: false, error: 'Could not connect: ' + e.message } }
+  }
   if (!waSock || waStatus !== 'connected') return { success: false, error: 'WhatsApp not connected' }
   try {
     const cleanPhone = phone.replace(/[^\d+@]/g, '').replace(/(?!^\+)\+/g, '')
     const jid = cleanPhone.includes('@') ? cleanPhone : `${cleanPhone}@s.whatsapp.net`
     await waSock.sendMessage(jid, { text: message })
+    resetIdleTimer()
     return { success: true }
   } catch (e) {
     return { success: false, error: e.message }
@@ -1606,7 +1658,6 @@ ipcMain.handle('whatsapp-disconnect', async () => {
 // ── App Lifecycle ────────────────────────────────────────────────────────────
 app.whenReady().then(() => {
   createWindow(false)
-  if (waSessionExists()) connectWhatsApp()
   Menu.setApplicationMenu(buildAppMenu())
 
   // No global shortcuts: shortcuts only work when the browser window is focused

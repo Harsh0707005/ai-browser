@@ -1437,15 +1437,6 @@ async function sendChatMessage() {
         }
       }
 
-      if (!waConnected) {
-        pendingWaMessage = { phone, message: waMsg }
-        showWaSetupCard()
-        addMessage('WhatsApp isn\'t connected yet. Scan the QR code above — your message will send automatically once connected.', 'assistant')
-        window.electronAPI.whatsappConnect().catch(() => {})
-        setInputEnabled(true)
-        return
-      }
-
       await sendWaMessage(phone, waMsg)
       return
     }
@@ -2391,6 +2382,11 @@ async function sendWaMessage(phone, waMsg) {
       const reply = `WhatsApp message sent to **${phone}**:\n\n"${waMsg}"`
       conversationHistory.push({ role: 'assistant', content: reply })
       addMessage(reply, 'assistant')
+    } else if (result.needsQR) {
+      pendingWaMessage = { phone, message: waMsg }
+      showWaSetupCard()
+      addMessage('WhatsApp isn\'t connected yet. Scan the QR code above — your message will send automatically once connected.', 'assistant')
+      window.electronAPI.whatsappConnect().catch(() => {})
     } else {
       addMessage('Failed to send WhatsApp message: ' + (result.error || 'Unknown error'), 'error')
     }
@@ -2404,6 +2400,7 @@ async function sendWaMessage(phone, waMsg) {
 // ── Integrations Settings Section ─────────────────────────────────────────────
 let _intWaStatus = 'disconnected'
 let _intWaQrUrl = null
+let _intWaSessionExists = false
 // { key → bool } for Composio services; null = not yet loaded
 let _intComposioStatuses = null
 
@@ -2524,9 +2521,10 @@ function buildIntegrationCard(key, connected) {
   // WhatsApp has its own sub-statuses; everything else is boolean
   let statusLabel, statusClass
   if (key === 'whatsapp') {
+    const effectiveStatus = (_intWaStatus === 'disconnected' && _intWaSessionExists) ? 'connected' : _intWaStatus
     const statusMap = { connected: 'Connected', disconnected: 'Disconnected', connecting: 'Connecting...', qr: 'Scan QR' }
-    statusLabel = statusMap[_intWaStatus] || 'Disconnected'
-    statusClass = _intWaStatus === 'connected' ? 'connected' : _intWaStatus === 'disconnected' ? 'disconnected' : 'connecting'
+    statusLabel = statusMap[effectiveStatus] || 'Disconnected'
+    statusClass = effectiveStatus === 'connected' ? 'connected' : effectiveStatus === 'disconnected' ? 'disconnected' : 'connecting'
   } else {
     statusLabel = connected ? 'Connected' : 'Disconnected'
     statusClass = connected ? 'connected' : 'disconnected'
@@ -2546,17 +2544,17 @@ function buildIntegrationCard(key, connected) {
   actions.className = 'integration-actions'
 
   if (key === 'whatsapp') {
-    if (_intWaStatus === 'connected') {
+    if (_intWaSessionExists || _intWaStatus === 'connected' || _intWaStatus === 'connecting' || _intWaStatus === 'qr') {
       const btn = document.createElement('button')
       btn.className = 'integration-btn danger'
-      btn.textContent = 'Disconnect'
+      btn.textContent = (_intWaStatus === 'connecting' || _intWaStatus === 'qr') ? 'Cancel' : 'Disconnect'
       btn.addEventListener('click', async () => {
         btn.disabled = true
         btn.textContent = 'Disconnecting...'
         await window.electronAPI.whatsappDisconnect()
       })
       actions.appendChild(btn)
-    } else if (_intWaStatus === 'disconnected') {
+    } else {
       const btn = document.createElement('button')
       btn.className = 'integration-btn primary'
       btn.textContent = 'Connect'
@@ -2564,15 +2562,6 @@ function buildIntegrationCard(key, connected) {
         btn.disabled = true
         btn.textContent = 'Connecting...'
         window.electronAPI.whatsappConnect().catch(() => {})
-      })
-      actions.appendChild(btn)
-    } else {
-      const btn = document.createElement('button')
-      btn.className = 'integration-btn danger'
-      btn.textContent = 'Cancel'
-      btn.addEventListener('click', async () => {
-        btn.disabled = true
-        await window.electronAPI.whatsappDisconnect()
       })
       actions.appendChild(btn)
     }
@@ -2715,12 +2704,14 @@ function renderWaPanel(status, data = {}) {
   const status = await window.electronAPI.whatsappGetStatus()
   waConnected = status.status === 'connected'
   _intWaStatus = status.status
+  _intWaSessionExists = status.sessionExists || false
   renderWaPanel(status.status, { phone: status.phone })
 
   window.electronAPI.onWhatsappStatus(async (data) => {
     waConnected = data.status === 'connected'
     _intWaStatus = data.status
     _intWaQrUrl = data.qrDataUrl || null
+    _intWaSessionExists = data.sessionExists || false
     renderWaPanel(data.status, data)
 
     // Re-render integrations tab if it's open
