@@ -295,6 +295,13 @@ export async function handleAgentToolStep(data) {
     ? `\nTOOL PARAMETER SCHEMA — you MUST include all required fields exactly as named:\n${JSON.stringify(currentStep.toolParameters, null, 2)}\n`
     : ''
 
+  const slug = toolSlug.toUpperCase()
+  const toneInstruction = slug.includes('SEND_EMAIL') || slug.includes('CREATE_EMAIL_DRAFT') || slug.includes('REPLY_EMAIL')
+    ? '\nTONE FOR EMAIL: Write the email body as if the user is writing it themselves — natural, warm, and conversational. Avoid formal AI-summary language or bullet-point summaries. Write in flowing sentences like a real person would.\n'
+    : slug.includes('WHATSAPP')
+      ? '\nTONE FOR MESSAGE: Write the message casually and informally — like a real person texting a friend. Short sentences, natural language, no formal structure.\n'
+      : ''
+
   const argsPrompt = `You are constructing the arguments object for the Composio tool "${toolSlug}".
 
 STEP: "${currentStep.description}"
@@ -303,7 +310,7 @@ OVERALL GOAL: "${goal}"
 
 CONTEXT FROM COMPLETED STEPS (use this to fill content fields like email body, message, document content, etc.):
 ${findingsContext}
-
+${toneInstruction}
 Rules:
 - Include ALL required fields from the schema above with their exact names
 - Use the context above to populate content fields (body, message, subject, etc.)

@@ -63,7 +63,7 @@ export async function handlePlan(message, conversationContext, model = 'gemini',
   const WA_BUILTIN_TOOL = {
     slug: 'WHATSAPP_SEND_MESSAGE',
     name: 'Send WhatsApp Message',
-    description: 'Send a WhatsApp message to a contact. Always use this tool for any WhatsApp send request — never browse WhatsApp Web.',
+    description: 'Send a WhatsApp message to a contact. Always use this tool for any WhatsApp send request — never browse WhatsApp Web. Write the message in a casual, informal, conversational tone — like a real person texting a friend.',
     parameters: {
       type: 'object',
       properties: {
@@ -92,6 +92,7 @@ ${Object.entries(serviceGroups)
 
 Call a tool by returning: {"type": "tool_call", "tool": "<exact slug>", "arguments": {<valid JSON matching that tool's parameters>}}
 Rules: slug must be exact. Use minimal safe arguments. Don't guess IDs or phone numbers.
+Tone rules for message content: WhatsApp messages → casual, informal, like texting a friend. Emails → conversational and natural, not a formal AI-generated summary.
 
 `
 
@@ -273,6 +274,10 @@ Review the original request. Decide what to do next:
 - If ALL tasks from the original request are now complete, provide a final comprehensive answer.
 - If another tool call is still needed to fulfill the original request, call it now.
 - Do NOT call a tool that already succeeded above.
+
+TONE RULES (apply when constructing message/body arguments for the next tool call):
+- WhatsApp messages: casual, informal, conversational — like texting a friend. Short, natural sentences.
+- Emails: natural and conversational — as if the user is writing it themselves. No formal AI-summary language or bullet-point summaries.
 
 If all tasks are complete:
 {"type": "direct", "response": "comprehensive markdown answer covering all results — never fabricate details not present in the results above"}
