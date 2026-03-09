@@ -69,7 +69,6 @@ let hoverTabId = null         // tab id currently being hovered
 let splitHoverPopupOpen = false  // true while the separate split-hover popup window is visible
 let splitPopupRect = null       // { left, top, width, height } in main-window content coords for 10px buffer
 let splitHoverPopupCloseTimer = null  // 1s delay before closing when hovered out
-const MAX_ACTIONS_PER_STEP = 5
 const WS_URL = 'ws://localhost:3001'
 
 let planRunCounter = 0
@@ -1642,94 +1641,156 @@ async function sendChatMessage() {
   setInputEnabled(true)
 }
 
-async function executeSingleStep(plan, stepIndex, tabId, planId, completedSteps) {
+async function executeStepSession(plan, stepIndex, tabId, planId, completedStepsHistory) {
   if (agentAbortRequested) return
-  if (completedSteps && completedSteps.has(stepIndex)) return
+  if (completedStepsHistory.some(h => h.stepIndex === stepIndex)) return
+
   updateStep(stepIndex, 'active', '', planId)
 
-  let stepComplete = false
-  let actionCount = 0
-  const actionsTakenThisStep = []
+  const sessionId = `${Date.now()}-step${stepIndex}`
+  const currentStep = plan.steps[stepIndex]
 
-  while (!stepComplete && actionCount < MAX_ACTIONS_PER_STEP) {
+  // Get initial page state
+  const initPageContext = await window.electronAPI.getPageContext(tabId)
+  const initURL = await window.electronAPI.getPageURL(tabId)
+
+  // Start the agent session on the backend — backend now owns the conversation thread
+  let result
+  try {
+    result = await sendRequest({
+      type: 'agent_start',
+      sessionId,
+      goal: plan.goal,
+      plan,
+      stepIndex,
+      completedStepsHistory: completedStepsHistory.slice(), // snapshot for context
+      pageContext: initPageContext,
+      currentURL: initURL,
+    })
+  } catch (error) {
+    updateStep(stepIndex, 'error', error.message, planId)
+    return
+  }
+
+  // Conversation loop — browser executes actions, backend/LLM drives the decisions
+  while (true) {
     if (agentAbortRequested) return
     await waitForCredModal()
     if (agentAbortRequested) return
-    actionCount++
-    await delay(500)
 
+    if (!result.success) {
+      updateStep(stepIndex, 'error', result.error || 'Agent error', planId)
+      return
+    }
+
+    const response = result.agentResponse
+    if (!response) {
+      updateStep(stepIndex, 'error', 'No response from agent', planId)
+      return
+    }
+
+    // Backend declared step goal achieved
+    if (response.type === 'step_complete') {
+      const finding = response.finding || response.thought || ''
+      updateStep(stepIndex, 'completed', response.thought || '', planId)
+      completedStepsHistory.push({
+        stepIndex,
+        description: currentStep ? currentStep.description : '',
+        finding,
+      })
+      if (finding.trim()) {
+        const finalURL = await window.electronAPI.getPageURL(tabId)
+        activeFindings.push({ step: stepIndex + 1, url: finalURL || '', result: finding.trim() })
+      }
+      return
+    }
+
+    // Execute the action the LLM decided on
+    if (response.type !== 'action' || !response.action) {
+      updateStep(stepIndex, 'error', `Unexpected response type: ${response.type}`, planId)
+      return
+    }
+
+    updateStep(stepIndex, 'active', actionLabel(response), planId)
+
+    const execResult = await window.electronAPI.executeAction(response, tabId)
+    if (!execResult.success) {
+      console.warn(`[STEP ${stepIndex + 1}] Action failed: ${execResult.error} — LLM will recover`)
+    }
+
+    await window.electronAPI.waitForLoad(tabId)
+
+    // Send new page state back to backend — backend appends observation and gets next LLM decision
     const pageContext = await window.electronAPI.getPageContext(tabId)
     const currentURL = await window.electronAPI.getPageURL(tabId)
 
-    let stepResult
     try {
-      stepResult = await sendRequest({
-        type: 'step',
-        goal: plan.goal,
-        plan: plan,
-        stepIndex: stepIndex,
-        pageContext: pageContext,
-        currentURL: currentURL,
-        actionsTakenThisStep: actionsTakenThisStep
+      result = await sendRequest({
+        type: 'agent_observe',
+        sessionId,
+        lastAction: response,
+        lastActionSuccess: execResult.success,
+        lastActionError: execResult.error || null,
+        pageContext,
+        currentURL,
       })
     } catch (error) {
-      updateStep(stepIndex, 'error', error.message)
+      updateStep(stepIndex, 'error', error.message, planId)
       return
     }
 
-    if (!stepResult.success && !stepResult.action) {
-      updateStep(stepIndex, 'error', stepResult.error || 'Failed')
-      return
-    }
+    await delay(300)
+  }
+}
 
-    if (stepResult.action === 'done') {
-      if (completedSteps) completedSteps.add(stepIndex)
-      updateStep(stepIndex, 'completed', stepResult.thought || '', planId)
-      if (stepResult.result && String(stepResult.result).trim()) {
-        activeFindings.push({
-          step: stepIndex + 1,
-          url: currentURL || '',
-          result: String(stepResult.result).trim()
-        })
-      } else if (stepResult.thought && String(stepResult.thought).trim()) {
-        activeFindings.push({
-          step: stepIndex + 1,
-          url: currentURL || '',
-          result: String(stepResult.thought).trim()
-        })
-      }
-      stepComplete = true
-      break
-    }
+// Executes a plan step that is backed by a Composio external tool (no browser needed).
+// Called when step.toolSlug is set — the backend constructs the tool call from prior findings.
+async function executeToolStep(plan, stepIndex, planId, completedStepsHistory) {
+  if (agentAbortRequested) return
+  if (completedStepsHistory.some(h => h.stepIndex === stepIndex)) return
 
-    updateStep(stepIndex, 'active', actionLabel(stepResult), planId)
+  const currentStep = plan.steps[stepIndex]
+  updateStep(stepIndex, 'active', `Running ${currentStep.toolSlug}…`, planId)
 
-    const execResult = await window.electronAPI.executeAction(stepResult, tabId)
-
-    if (!execResult.success) {
-      updateStep(stepIndex, 'error', execResult.error || 'Action failed', planId)
-      break
-    }
-
-    actionsTakenThisStep.push({
-      action: stepResult.action,
-      url: stepResult.url,
-      elementId: stepResult.elementId,
-      text: stepResult.text
+  let result
+  try {
+    result = await sendRequest({
+      type: 'agent_tool_step',
+      goal: plan.goal,
+      plan,
+      stepIndex,
+      completedStepsHistory: completedStepsHistory.slice(),
     })
-
-    await window.electronAPI.waitForLoad(tabId)
+  } catch (error) {
+    updateStep(stepIndex, 'error', error.message, planId)
+    return
   }
 
-  if (!stepComplete && actionCount >= MAX_ACTIONS_PER_STEP) {
-    if (completedSteps) completedSteps.add(stepIndex)
-    updateStep(stepIndex, 'completed', 'Max actions reached, moving on', planId)
+  if (result.needsConnection) {
+    // Service needs auth — surface to renderer like plan.js does
+    addConnectionCard(result.serviceLabel, result.redirectUrl)
+    updateStep(stepIndex, 'error', `${result.serviceLabel} not connected`, planId)
+    return
+  }
+
+  if (!result.success) {
+    updateStep(stepIndex, 'error', result.error || 'Tool step failed', planId)
+    return
+  }
+
+  const finding = result.finding || result.thought || ''
+  updateStep(stepIndex, 'completed', result.thought || '', planId)
+  completedStepsHistory.push({ stepIndex, description: currentStep.description, finding })
+  if (finding.trim()) {
+    activeFindings.push({ step: stepIndex + 1, url: '', result: finding.trim() })
   }
 }
 
 async function executeAgentPlan(plan, planId = activePlanId) {
   const groups = groupStepsByGroup(plan.steps)
-  const completedSteps = new Set()
+  // Shared history array — each completed step appends its record here.
+  // Passed by reference so all sequential steps see prior completions.
+  const completedStepsHistory = []
   const startFromCurrentTab = !!(plan && plan.execution && plan.execution.startFromCurrentTab)
   let sequentialTabId = null
 
@@ -1746,38 +1807,54 @@ async function executeAgentPlan(plan, planId = activePlanId) {
 
     if (!isParallel) {
       const stepInfo = group[0]
-      if (completedSteps.has(stepInfo.originalIndex)) continue
-      if (!sequentialTabId) {
-        sequentialTabId = await window.electronAPI.createAgentTab()
-        agentTabIds.add(sequentialTabId)
-        ownedAgentTabIds.add(sequentialTabId)
-      }
-      await executeSingleStep(plan, stepInfo.originalIndex, sequentialTabId, planId, completedSteps)
-    } else {
-      const n = group.length
-      let tabIds
-      if (sequentialTabId) {
-        const extra = await Promise.all(
-          Array.from({ length: n - 1 }, (_, i) => window.electronAPI.createAgentTab(null, i > 0))
-        )
-        tabIds = [sequentialTabId, ...extra]
-        extra.forEach(id => {
-          agentTabIds.add(id)
-          ownedAgentTabIds.add(id)
-        })
+      if (completedStepsHistory.some(h => h.stepIndex === stepInfo.originalIndex)) continue
+      const step = plan.steps[stepInfo.originalIndex]
+
+      if (step.toolSlug) {
+        // Tool step — no browser needed, backend calls Composio directly
+        await executeToolStep(plan, stepInfo.originalIndex, planId, completedStepsHistory)
       } else {
-        tabIds = await Promise.all(
-          group.map((_, i) => window.electronAPI.createAgentTab(null, i > 0))
+        // Browser step — start/continue agent session in a tab
+        if (!sequentialTabId) {
+          sequentialTabId = await window.electronAPI.createAgentTab()
+          agentTabIds.add(sequentialTabId)
+          ownedAgentTabIds.add(sequentialTabId)
+        }
+        await executeStepSession(plan, stepInfo.originalIndex, sequentialTabId, planId, completedStepsHistory)
+      }
+    } else {
+      let tabIds
+
+      // Split parallel group into tool steps vs browser steps
+      const toolSteps = group.filter(s => plan.steps[s.originalIndex]?.toolSlug)
+      const browserSteps = group.filter(s => !plan.steps[s.originalIndex]?.toolSlug)
+
+      // Tool steps in parallel (no tabs needed)
+      const toolPromises = toolSteps.map(s =>
+        executeToolStep(plan, s.originalIndex, planId, completedStepsHistory)
+      )
+
+      // Browser steps in parallel (each needs a tab)
+      let browserPromises = []
+      if (browserSteps.length > 0) {
+        if (sequentialTabId) {
+          const extra = await Promise.all(
+            Array.from({ length: browserSteps.length - 1 }, (_, i) => window.electronAPI.createAgentTab(null, i > 0))
+          )
+          tabIds = [sequentialTabId, ...extra]
+          extra.forEach(id => { agentTabIds.add(id); ownedAgentTabIds.add(id) })
+        } else {
+          tabIds = await Promise.all(
+            browserSteps.map((_, i) => window.electronAPI.createAgentTab(null, i > 0))
+          )
+          tabIds.forEach(id => { agentTabIds.add(id); ownedAgentTabIds.add(id) })
+        }
+        browserPromises = browserSteps.map((step, i) =>
+          executeStepSession(plan, step.originalIndex, tabIds[i], planId, completedStepsHistory)
         )
-        tabIds.forEach(id => {
-          agentTabIds.add(id)
-          ownedAgentTabIds.add(id)
-        })
       }
 
-      await Promise.all(
-        group.map((step, i) => executeSingleStep(plan, step.originalIndex, tabIds[i], planId, completedSteps))
-      )
+      await Promise.all([...toolPromises, ...browserPromises])
 
       sequentialTabId = tabIds[0]
       for (let i = 1; i < tabIds.length; i++) {
@@ -1802,8 +1879,9 @@ async function executeAgentPlan(plan, planId = activePlanId) {
       goal: plan.goal,
       finalURL: finalUrl || '',
       finalPageContext: finalPageContext || null,
+      completedStepsHistory: completedStepsHistory,
       findings: activeFindings || [],
-      plan: plan || null
+      plan: plan || null,
     })
     if (summaryResult.success && summaryResult.summary) {
       summary = summaryResult.summary

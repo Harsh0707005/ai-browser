@@ -13,6 +13,7 @@ import { handlePlan } from './handlers/plan.js'
 import { handleStep } from './handlers/step.js'
 import { handleSummary } from './handlers/summary.js'
 import { handleSummarizeConversation } from './handlers/summarizeConversation.js'
+import { handleAgentStart, handleAgentObserve, handleAgentToolStep } from './handlers/agent.js'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 dotenv.config({ path: path.join(__dirname, '..', '.env') })
@@ -78,6 +79,21 @@ wss.on('connection', (ws) => {
       if (msg.type === 'step') {
         const result = await handleStep(msg)
         ws.send(JSON.stringify({ type: 'step_result', requestId, ...result }))
+      }
+
+      if (msg.type === 'agent_start') {
+        const result = await handleAgentStart({ ...msg, model: msg.model || 'gemini' })
+        ws.send(JSON.stringify({ type: 'agent_result', requestId, ...result }))
+      }
+
+      if (msg.type === 'agent_observe') {
+        const result = await handleAgentObserve(msg)
+        ws.send(JSON.stringify({ type: 'agent_result', requestId, ...result }))
+      }
+
+      if (msg.type === 'agent_tool_step') {
+        const result = await handleAgentToolStep({ ...msg, model: msg.model || 'gemini' })
+        ws.send(JSON.stringify({ type: 'agent_tool_step_result', requestId, ...result }))
       }
 
       if (msg.type === 'summary') {
