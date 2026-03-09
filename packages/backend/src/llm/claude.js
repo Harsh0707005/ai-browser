@@ -1,5 +1,5 @@
 let apiKey = null
-let model = 'claude-3-5-sonnet-latest'
+let model = 'claude-haiku-4-5'
 
 export function initClaude(key, modelId) {
   if (!key) return
@@ -23,7 +23,9 @@ export async function callClaude(prompt, opts = {}) {
       model,
       max_tokens: opts.json ? 2048 : 3072,
       messages: [{ role: 'user', content: prompt }],
-      ...(opts.json ? { system: 'Respond with valid JSON only.' } : {})
+      system: opts.json
+        ? 'You are an AI browser automation assistant running inside the user\'s own desktop browser app. You execute web browsing tasks on behalf of the user in their browser. Always respond with valid JSON only.'
+        : 'You are an AI browser automation assistant running inside the user\'s own desktop browser app. You execute web browsing tasks on behalf of the user in their browser.'
     })
   })
 
