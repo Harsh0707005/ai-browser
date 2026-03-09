@@ -74,8 +74,11 @@ export async function handlePlan(message, conversationContext, model = 'gemini',
     },
   }
 
+  // Strip any Composio WhatsApp tools — the built-in Baileys integration handles all WA sends
+  const filteredExternalTools = externalTools.filter(t => !t.slug.toUpperCase().startsWith('WHATSAPP'))
+
   const serviceGroups = { WhatsApp: [WA_BUILTIN_TOOL] }
-  for (const t of externalTools) {
+  for (const t of filteredExternalTools) {
     if (!serviceGroups[t.serviceLabel]) serviceGroups[t.serviceLabel] = []
     serviceGroups[t.serviceLabel].push({
       slug: t.slug,
@@ -105,7 +108,7 @@ Tone rules for message content: WhatsApp messages → casual, informal, like tex
     : ''
 
   const contactsBlock = contacts && contacts.length > 0
-    ? `SAVED CONTACTS (use these to resolve names to phone/email/address — never ask the user for details already here):
+    ? `SAVED CONTACTS — use ONLY these exact values for phone numbers and email addresses. NEVER invent, guess, or use placeholder addresses (like @example.com). If the contact has no email/phone, say you cannot proceed without it — do not fabricate one:
 ${contacts.map(c => {
   const parts = [`Name: ${c.name}`]
   if (c.phone) parts.push(`Phone: ${c.phone}`)
@@ -348,8 +351,31 @@ Write a clear, natural answer based only on this data.
     // Enrich tool steps with the Composio parameter schema so the execution
     // layer can pass it to the LLM and get correctly-named arguments.
     for (const step of parsed.steps) {
-      if (step.toolSlug) {
-        const toolDef = externalTools.find(t => t.slug === step.toolSlug)
+      if (step.toolSlug === 'WHATSAPP_SEND_MESSAGE') {
+        // Resolve recipient phone from contacts list at plan time (contacts not available later)
+        if (contacts && contacts.length) {
+          const descLower = step.description.toLowerCase()
+          const matched = contacts.find(c => c.name && descLower.includes(c.name.toLowerCase()))
+          if (matched && matched.phone) {
+            step.waRecipient = { phone: matched.phone, name: matched.name }
+          }
+        }
+      } else if (step.toolSlug && (step.toolSlug.includes('SEND_EMAIL') || step.toolSlug.includes('CREATE_EMAIL_DRAFT') || step.toolSlug.includes('REPLY_EMAIL'))) {
+        // Resolve recipient email from contacts so the LLM cannot hallucinate (e.g. harsh@gmail.com)
+        if (contacts && contacts.length) {
+          const descLower = step.description.toLowerCase()
+          const matched = contacts.find(c => c.name && c.email && descLower.includes(c.name.toLowerCase()))
+          if (matched) {
+            step.emailRecipient = { email: matched.email, name: matched.name }
+          }
+        }
+        const toolDef = filteredExternalTools.find(t => t.slug === step.toolSlug)
+        if (toolDef) {
+          step.toolParameters = toolDef.parameters
+          step.toolDescription = toolDef.description
+        }
+      } else if (step.toolSlug) {
+        const toolDef = filteredExternalTools.find(t => t.slug === step.toolSlug)
         if (toolDef) {
           step.toolParameters = toolDef.parameters
           step.toolDescription = toolDef.description

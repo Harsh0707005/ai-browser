@@ -261,9 +261,40 @@ export async function handleAgentToolStep(data) {
   const toolSlug = currentStep?.toolSlug
 
   if (!toolSlug) return { success: false, error: 'No toolSlug on step' }
-  if (!isComposioReady()) return { success: false, error: 'Composio not configured' }
 
   console.log(`[TOOL STEP ${stepIndex + 1}] ${toolSlug} | "${currentStep.description}"`)
+
+  // ── Built-in WhatsApp intercept (Baileys, not Composio) ───────────────────
+  if (toolSlug === 'WHATSAPP_SEND_MESSAGE') {
+    const recipient = currentStep.waRecipient
+    if (!recipient?.phone) {
+      return { success: false, error: 'WhatsApp recipient phone not found in contacts — cannot send' }
+    }
+    const findingsContext = completedStepsHistory.length > 0
+      ? completedStepsHistory.map(h => `Step ${h.stepIndex + 1}: ${h.finding || '(none)'}`).join('\n')
+      : '(no prior findings)'
+    const msgPrompt = `Write a WhatsApp message to send to ${recipient.name || recipient.phone}.
+
+STEP GOAL: "${currentStep.description}"
+OVERALL GOAL: "${goal}"
+
+FINDINGS TO SHARE:
+${findingsContext}
+
+TONE: casual, informal, conversational — like a real person texting a friend. Short, natural sentences.
+
+Respond with ONLY the message text, no extra explanation.`
+    let waMessage = ''
+    try {
+      waMessage = ((await callLLM(msgPrompt, model, { json: false })) || '').trim()
+    } catch (e) {
+      return { success: false, error: `Failed to compose WhatsApp message: ${e.message}` }
+    }
+    if (!waMessage) return { success: false, error: 'LLM returned an empty WhatsApp message' }
+    return { success: true, whatsappSend: { phone: recipient.phone, name: recipient.name, message: waMessage } }
+  }
+
+  if (!isComposioReady()) return { success: false, error: 'Composio not configured' }
 
   // Build context from completed steps' findings
   const findingsContext = completedStepsHistory.length > 0
@@ -302,6 +333,10 @@ export async function handleAgentToolStep(data) {
       ? '\nTONE FOR MESSAGE: Write the message casually and informally — like a real person texting a friend. Short sentences, natural language, no formal structure.\n'
       : ''
 
+  const recipientBlock = currentStep.emailRecipient?.email
+    ? `\nRECIPIENT EMAIL (use this exact value — do not invent or guess): ${currentStep.emailRecipient.email}\n`
+    : ''
+
   const argsPrompt = `You are constructing the arguments object for the Composio tool "${toolSlug}".
 
 STEP: "${currentStep.description}"
@@ -310,7 +345,7 @@ OVERALL GOAL: "${goal}"
 
 CONTEXT FROM COMPLETED STEPS (use this to fill content fields like email body, message, document content, etc.):
 ${findingsContext}
-${toneInstruction}
+${recipientBlock}${toneInstruction}
 Rules:
 - Include ALL required fields from the schema above with their exact names
 - Use the context above to populate content fields (body, message, subject, etc.)
@@ -325,6 +360,19 @@ Respond with ONLY a valid JSON object of arguments — no explanation.`
     if (!toolArgs || typeof toolArgs !== 'object') throw new Error('Could not parse tool arguments')
   } catch (e) {
     return { success: false, error: `Failed to construct tool arguments: ${e.message}` }
+  }
+
+  // Override recipient email with contact from plan so the LLM cannot hallucinate (e.g. harsh@gmail.com)
+  if (currentStep.emailRecipient?.email && (slug.includes('SEND_EMAIL') || slug.includes('REPLY_EMAIL') || slug.includes('CREATE_EMAIL_DRAFT'))) {
+    const recipientParam = Array.isArray(currentStep.toolParameters)
+      ? currentStep.toolParameters.find(p => p?.name && /recipient|to_email|^to$/.test(String(p.name)))
+      : null
+    const recipientKey = recipientParam?.name
+    if (recipientKey) {
+      toolArgs[recipientKey] = currentStep.emailRecipient.email
+    } else {
+      toolArgs.recipient_email = currentStep.emailRecipient.email
+    }
   }
 
   // ── Step 3: Execute the Composio tool ─────────────────────────────────────

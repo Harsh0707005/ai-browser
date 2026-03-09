@@ -1773,6 +1773,49 @@ async function executeToolStep(plan, stepIndex, planId, completedStepsHistory) {
     return
   }
 
+  // Built-in WhatsApp send (Baileys)
+  if (result.whatsappSend) {
+    let { phone, name, message: waMsg } = result.whatsappSend
+    if (!phone && name) {
+      const contact = await resolveContactByName(name)
+      phone = contact?.phone
+    }
+    if (!phone) {
+      updateStep(stepIndex, 'error', `No phone number found for ${name || 'recipient'}`, planId)
+      return
+    }
+
+    // Delegate connection state entirely to main.js — it auto-reconnects when a session exists
+    updateStep(stepIndex, 'active', 'Sending WhatsApp message…', planId)
+    let waResult
+    try {
+      waResult = await window.electronAPI.whatsappSendMessage(phone, waMsg)
+    } catch (e) {
+      updateStep(stepIndex, 'error', e.message, planId)
+      return
+    }
+
+    if (!waResult?.success) {
+      if (waResult?.needsQR) {
+        // No saved session — need a QR scan. Queue message, it sends automatically on connect.
+        pendingWaMessage = { phone, message: waMsg }
+        updateStep(stepIndex, 'error', 'WhatsApp not connected — scan QR to send', planId)
+        showWaSetupCard()
+        addMessage("WhatsApp isn't connected yet. Scan the QR code above — your message will send automatically once connected.", 'assistant')
+        window.electronAPI.whatsappConnect().catch(() => {})
+      } else {
+        updateStep(stepIndex, 'error', waResult?.error || 'WhatsApp send failed', planId)
+      }
+      return
+    }
+
+    const finding = `WhatsApp message sent to ${name || phone}`
+    updateStep(stepIndex, 'completed', finding, planId)
+    completedStepsHistory.push({ stepIndex, description: currentStep.description, finding })
+    addMessage(`WhatsApp message sent to **${name || phone}**:\n\n"${waMsg}"`, 'assistant')
+    return
+  }
+
   if (!result.success) {
     updateStep(stepIndex, 'error', result.error || 'Tool step failed', planId)
     return
@@ -1856,12 +1899,15 @@ async function executeAgentPlan(plan, planId = activePlanId) {
 
       await Promise.all([...toolPromises, ...browserPromises])
 
-      sequentialTabId = tabIds[0]
-      for (let i = 1; i < tabIds.length; i++) {
-        const id = tabIds[i]
-        if (window.electronAPI) window.electronAPI.closeTab(id)
-        agentTabIds.delete(id)
-        ownedAgentTabIds.delete(id)
+      // Only assign sequentialTabId / close tabs when we had browser steps (tabIds was set)
+      if (browserSteps.length > 0 && tabIds?.length) {
+        sequentialTabId = tabIds[0]
+        for (let i = 1; i < tabIds.length; i++) {
+          const id = tabIds[i]
+          if (window.electronAPI) window.electronAPI.closeTab(id)
+          agentTabIds.delete(id)
+          ownedAgentTabIds.delete(id)
+        }
       }
       updateAgentOverlay()
     }
