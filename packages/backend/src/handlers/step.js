@@ -4,89 +4,130 @@ import { formatElements } from '../utils/formatElements.js'
 
 export async function handleStep(data) {
   const model = data.model || 'gemini'
-  const { goal, plan, stepIndex, pageContext, currentURL, actionsTakenThisStep, clientDateTime } = data
-  const currentStep = plan.steps[stepIndex]
+  const {
+    goal,
+    plan,
+    currentStepIndex,
+    completedStepsHistory,
+    actionsThisStep,
+    pageContext,
+    currentURL,
+    clientDateTime,
+  } = data
 
-  if (!currentStep) return { success: true, action: 'done', thought: 'All steps completed' }
+  const currentStep = plan.steps[currentStepIndex]
+  if (!currentStep) return { success: true, type: 'step_complete', finding: '', thought: 'All steps completed' }
 
-  console.log(`[STEP ${stepIndex + 1}/${plan.steps.length}] ${currentStep.description}`)
+  console.log(`[STEP ${currentStepIndex + 1}/${plan.steps.length}] "${currentStep.description}"`)
+
+  // ── Plan status block ────────────────────────────────────────────────────
+  const planStatus = plan.steps.map(s => {
+    const idx = s.step - 1
+    const done = Array.isArray(completedStepsHistory) && completedStepsHistory.some(h => h.stepIndex === idx)
+    const isCurrent = idx === currentStepIndex
+    const icon = done ? '✓' : isCurrent ? '→' : '○'
+    const label = done ? '[COMPLETED]' : isCurrent ? '[CURRENT]' : '[PENDING]'
+    return `  ${icon} Step ${s.step}: ${s.description} ${label}`
+  }).join('\n')
+
+  // ── Completed steps summary ──────────────────────────────────────────────
+  const completedSummary = Array.isArray(completedStepsHistory) && completedStepsHistory.length > 0
+    ? completedStepsHistory.map(h => {
+        const finding = h.finding ? ` → ${h.finding}` : ' → (no finding recorded)'
+        return `  Step ${h.stepIndex + 1} (${h.description}):${finding}`
+      }).join('\n')
+    : '  None — this is the first step.'
+
+  // ── Actions taken in this step so far ───────────────────────────────────
+  const actionsBlock = Array.isArray(actionsThisStep) && actionsThisStep.length > 0
+    ? actionsThisStep.map((a, i) => {
+        const details = a.action === 'navigate'
+          ? `→ ${a.url}`
+          : a.action === 'type'
+            ? `→ element [${a.elementId}], typed "${a.text}"`
+            : a.action === 'click'
+              ? `→ element [${a.elementId}]`
+              : ''
+        const outcome = a.outcome || 'success'
+        const thought = a.thought ? ` (${a.thought})` : ''
+        return `  ${i + 1}. ${a.action} ${details} [${outcome}]${thought}`
+      }).join('\n')
+    : '  None — decide the first action.'
 
   const elementsFormatted = formatElements(pageContext.elements)
-  const alreadyDone = Array.isArray(actionsTakenThisStep) && actionsTakenThisStep.length > 0
-    ? `\nACTIONS ALREADY DONE FOR THIS STEP (do not repeat these):\n${actionsTakenThisStep.map(a => `- ${a.action}${a.url ? ' to ' + a.url : ''}${a.elementId != null ? ' element ' + a.elementId : ''}${a.text ? ' "' + a.text + '"' : ''}`).join('\n')}\nIf this step is now complete, return {"action":"done","thought":"reason"}.`
-    : ''
 
   const dateBlock = clientDateTime
-    ? `CURRENT DATE/TIME: ${clientDateTime}\nWhen the user uses relative time references (e.g. "in 1 hour", "tomorrow", "next week", "this evening", "after 30 minutes"), resolve them to exact dates/times based on CURRENT DATE/TIME above.\n\n`
+    ? `CURRENT DATE/TIME: ${clientDateTime}\n\n`
     : ''
 
-  const prompt = `You are an AI browser automation agent executing a plan.
-${dateBlock}GOAL: "${goal}"
+  const prompt = `You are an AI browser execution agent responsible for completing one step of a larger plan.
+${dateBlock}OVERALL GOAL: "${goal}"
 
-PLAN:
-${plan.steps.map(s => `  ${s.step}. ${s.description}`).join('\n')}
+PLAN STATUS:
+${planStatus}
 
-CURRENT STEP (${stepIndex + 1} of ${plan.steps.length}): "${currentStep.description}"
-${alreadyDone}
+COMPLETED STEPS SUMMARY:
+${completedSummary}
 
-CURRENT PAGE:
+CURRENT STEP GOAL (Step ${currentStepIndex + 1}): "${currentStep.description}"
+
+ACTIONS TAKEN IN THIS STEP SO FAR:
+${actionsBlock}
+
+CURRENT PAGE STATE:
   URL: ${currentURL || 'about:blank'}
   Title: ${pageContext.title || '(untitled)'}
   Headings: ${(pageContext.headings || []).join(' | ') || '(none)'}
-  Visible text excerpt: ${(pageContext.mainText || '').substring(0, 1200) || '(none)'}
+  Page content: ${(pageContext.mainText || '').substring(0, 1500) || '(none)'}
 
 INTERACTIVE ELEMENTS:
 ${elementsFormatted}
 
-Pick ONE action. Use the element [id] number from the list above.
+---
 
-STRICT ACTION SCHEMAS (respond with exactly one):
+DECISION: Carefully evaluate whether the current step goal has been achieved based on the current page state and actions taken so far.
 
-Navigate to a URL:
-{"action":"navigate","url":"https://...","thought":"reason"}
+If the step goal IS achieved — return step_complete:
+{"type":"step_complete","finding":"<concise summary of what was accomplished or found — include specific data, values, URLs as evidence>","thought":"<why this step is done>"}
 
-Click element by ID:
-{"action":"click","elementId":<number>,"thought":"reason"}
-
-Type into input by ID:
-{"action":"type","elementId":<number>,"text":"text to type","thought":"reason"}
-
-Step is complete:
-{"action":"done","thought":"reason","result":"optional key info you found that helps answer the user"}
+If the step goal is NOT yet achieved — return the single best next action:
+{"type":"action","action":"navigate","url":"https://...","thought":"<reason>"}
+{"type":"action","action":"click","elementId":<number>,"thought":"<reason>"}
+{"type":"action","action":"type","elementId":<number>,"text":"<exact text to type>","thought":"<reason>"}
 
 Rules:
-- elementId MUST be a number from the [id] column above
-- For type: pick the correct input element, provide exact text
-- For click: pick the exact button/link element
-- Do not assume conventional HTML structure. A flow may use forms, or plain div/button driven UI, or custom widgets. Base actions only on elements actually present in CURRENT PAGE / INTERACTIVE ELEMENTS
-- Decide interaction strategy only after inspecting current page context; if unsure, use the safest next exploratory action grounded in visible elements
-- If the step is already fulfilled by the current page state, return done
-- Do NOT suggest an action already listed in ACTIONS ALREADY DONE FOR THIS STEP
-- One action per response then we will ask again; return done when this step is achieved
-- If the user's request is informational (recommendations, comparisons, best-of, research), use "result" on done to capture the useful info you learned from the page
-- When returning done for research or informational steps, include the current page URL in result so it can be cited (e.g. "Source: <current page URL>" or inline the URL where relevant). Include any other relevant URLs from the page (articles, studies, products) when they support the answer
-- Never fabricate numbers, metrics, claims, names, prices, or any factual detail in "thought" or "result". Only include details visible on the current page or already provided in plan/context. If a value is not available, omit it or mark it unknown
-- Respond with ONLY the JSON object`
+- elementId MUST be a number from the INTERACTIVE ELEMENTS list above
+- Do not repeat an action that already succeeded in ACTIONS TAKEN IN THIS STEP
+- If a previous action failed, try a different approach — do not retry the exact same way
+- Base all decisions only on what is actually visible in CURRENT PAGE STATE and INTERACTIVE ELEMENTS
+- For research or informational steps, capture key findings with source URLs in "finding"
+- Never fabricate any data, numbers, names, prices, or facts not visible on the current page
+- Respond with ONLY valid JSON`
 
   let text
   try {
     text = await callLLM(prompt, model, { json: true })
   } catch (err) {
-    return { success: false, action: 'done', thought: err.message }
+    return { success: false, type: 'action', action: 'done', thought: err.message }
   }
 
   const parsed = parseJSON(text)
 
-  if (parsed?.action) {
+  if (parsed?.type === 'step_complete') {
+    console.log(`[STEP ${currentStepIndex + 1}] COMPLETE | ${parsed.thought || ''}`)
+    return { success: true, type: 'step_complete', finding: parsed.finding || '', thought: parsed.thought || '' }
+  }
+
+  if (parsed?.type === 'action' && parsed.action) {
     const part = parsed.action === 'navigate'
       ? parsed.url
       : parsed.action === 'type'
-        ? `element ${parsed.elementId}, text`
+        ? `element ${parsed.elementId}, text "${parsed.text}"`
         : parsed.elementId != null ? `element ${parsed.elementId}` : ''
-    console.log(`[STEP ${stepIndex + 1}] ${parsed.action}${part ? ': ' + part : ''} | ${parsed.thought || ''}`)
+    console.log(`[STEP ${currentStepIndex + 1}] ${parsed.action}${part ? ': ' + part : ''} | ${parsed.thought || ''}`)
     return { success: true, ...parsed }
   }
 
   console.error('[STEP] Parse failed:', text)
-  return { success: false, action: 'done', thought: 'Could not parse action' }
+  return { success: false, type: 'action', action: 'done', thought: 'Could not parse action' }
 }

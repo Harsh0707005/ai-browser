@@ -63,7 +63,7 @@ export async function handlePlan(message, conversationContext, model = 'gemini',
   const WA_BUILTIN_TOOL = {
     slug: 'WHATSAPP_SEND_MESSAGE',
     name: 'Send WhatsApp Message',
-    description: 'Send a WhatsApp message to a contact. Always use this tool for any WhatsApp send request — never browse WhatsApp Web.',
+    description: 'Send a WhatsApp message to a contact. Always use this tool for any WhatsApp send request — never browse WhatsApp Web. Write the message in a casual, informal, conversational tone — like a real person texting a friend.',
     parameters: {
       type: 'object',
       properties: {
@@ -74,8 +74,11 @@ export async function handlePlan(message, conversationContext, model = 'gemini',
     },
   }
 
+  // Strip any Composio WhatsApp tools — the built-in Baileys integration handles all WA sends
+  const filteredExternalTools = externalTools.filter(t => !t.slug.toUpperCase().startsWith('WHATSAPP'))
+
   const serviceGroups = { WhatsApp: [WA_BUILTIN_TOOL] }
-  for (const t of externalTools) {
+  for (const t of filteredExternalTools) {
     if (!serviceGroups[t.serviceLabel]) serviceGroups[t.serviceLabel] = []
     serviceGroups[t.serviceLabel].push({
       slug: t.slug,
@@ -92,6 +95,7 @@ ${Object.entries(serviceGroups)
 
 Call a tool by returning: {"type": "tool_call", "tool": "<exact slug>", "arguments": {<valid JSON matching that tool's parameters>}}
 Rules: slug must be exact. Use minimal safe arguments. Don't guess IDs or phone numbers.
+Tone rules for message content: WhatsApp messages → casual, informal, like texting a friend. Emails → conversational and natural, not a formal AI-generated summary.
 
 `
 
@@ -104,7 +108,7 @@ Rules: slug must be exact. Use minimal safe arguments. Don't guess IDs or phone 
     : ''
 
   const contactsBlock = contacts && contacts.length > 0
-    ? `SAVED CONTACTS (use these to resolve names to phone/email/address — never ask the user for details already here):
+    ? `SAVED CONTACTS — use ONLY these exact values for phone numbers and email addresses. NEVER invent, guess, or use placeholder addresses (like @example.com). If the contact has no email/phone, say you cannot proceed without it — do not fabricate one:
 ${contacts.map(c => {
   const parts = [`Name: ${c.name}`]
   if (c.phone) parts.push(`Phone: ${c.phone}`)
@@ -124,34 +128,48 @@ ${contacts.map(c => {
     ? `CURRENT DATE/TIME: ${clientDateTime}\nWhen the user uses relative time references (e.g. "in 1 hour", "tomorrow", "next week", "this evening", "after 30 minutes"), resolve them to exact dates/times based on CURRENT DATE/TIME above and use those exact values in tool arguments.\n`
     : ''
 
-  const prompt = `You are an AI browser assistant. Decide: call a tool, answer directly, or browse the web.
-${dateBlock}${contactsBlock}${toolsBlock}
-${toolUseInstruction}
+  const prompt = `You are an AI browser assistant. Your goal is to help the user accomplish their request using the best available approach.
+
+DECISION PRIORITY — follow in order:
+1. ANSWER DIRECTLY if the request needs no live data, no actions, and you can answer accurately from knowledge alone.
+2. CALL A TOOL if the request can be fulfilled by one of the available external tools listed below.
+3. BROWSE THE WEB if live data or on-site interaction is required and no tool covers it.
+
+STRICT RULE: Never fabricate any information, numbers, names, dates, or details not explicitly given to you in this context.
+
+${dateBlock}${contactsBlock}${toolsBlock}${toolUseInstruction}
 
 ${contextBlock}"${message}"
 
-ANSWER DIRECTLY when:
-- Greetings, casual conversation, chitchat
-- User provides text to summarize, explain, or analyze
-- General knowledge you can confidently answer
-- Follow-ups that don't need new browsing
-{"type": "direct", "response": "your answer"}
-You may use markdown. For tables use a fenced code block with language "table-json" containing {"columns":[...],"rows":[[...]]}.
-Accuracy rule: never fabricate numbers, prices, names, quotes, or details you don't know.
+---
 
-BROWSE only when no tool covers the request and live web data is needed.
-NEVER browse for any service listed in AVAILABLE EXTERNAL TOOLS.
-{
-  "type": "plan",
-  "goal": "concise summary",
-  "execution": {"startFromCurrentTab": false},
-  "steps": [
-    {"step": 1, "group": 1, "description": "Navigate to X and do Y"}
-  ]
-}
-Plan rules: same group = parallel execution; different group = sequential. Max 10 steps. Be specific about actions.
-Set startFromCurrentTab=true only when continuing from current page/prior workflow.
-Do not assume site structure — plan to inspect first, then act.
+## ANSWER DIRECTLY
+Use when: greetings, chitchat, summarizing/explaining text the user provided, general knowledge questions, follow-ups that don't need new data.
+{"type": "direct", "response": "<your answer — markdown allowed. For tabular data use a fenced code block with language 'table-json' containing {\"columns\":[...],\"rows\":[[...]]}>"}
+
+---
+
+## BROWSE THE WEB / MIXED PLAN
+Use when the request requires browsing the web, OR a mix of browsing and external tools.
+
+Each step has ONE focused goal. Steps with the same group number run in parallel; different group numbers run sequentially.
+
+For steps that need an AVAILABLE EXTERNAL TOOL (not browsing), add "toolSlug": "<exact slug>" to that step. The execution engine will call the tool directly using findings from prior steps — do NOT try to navigate to the service's website for these steps.
+
+{"type": "plan", "goal": "<concise overall goal>", "execution": {"startFromCurrentTab": false}, "steps": [
+  {"step": 1, "group": 1, "description": "<what to find or accomplish via browsing>"},
+  {"step": 2, "group": 2, "description": "<what to do with the tool>", "toolSlug": "<exact slug from AVAILABLE EXTERNAL TOOLS>"}
+]}
+
+Step rules:
+- Browser steps: describe the goal, not the clicks — the execution engine handles that
+- Tool steps: include "toolSlug" with the exact slug — the engine will construct the call using prior findings
+- Good browser step: "Find the opening hours of Phoenix Palladium mall via web search"
+- Good tool step: {"description": "Email findings to Harsh", "toolSlug": "GMAIL_SEND_EMAIL"}
+- Bad: "Go to Gmail and send an email" (never navigate to a service covered by an external tool)
+- Set startFromCurrentTab=true only if the user is clearly continuing work on the currently open page
+
+---
 
 Respond with ONLY valid JSON.`
 
@@ -260,6 +278,10 @@ Review the original request. Decide what to do next:
 - If another tool call is still needed to fulfill the original request, call it now.
 - Do NOT call a tool that already succeeded above.
 
+TONE RULES (apply when constructing message/body arguments for the next tool call):
+- WhatsApp messages: casual, informal, conversational — like texting a friend. Short, natural sentences.
+- Emails: natural and conversational — as if the user is writing it themselves. No formal AI-summary language or bullet-point summaries.
+
 If all tasks are complete:
 {"type": "direct", "response": "comprehensive markdown answer covering all results — never fabricate details not present in the results above"}
 
@@ -326,6 +348,40 @@ Write a clear, natural answer based only on this data.
 
   // ── Browsing plan ────────────────────────────────────────────────────────
   if (parsed?.steps || (parsed?.type === 'plan' && parsed.steps)) {
+    // Enrich tool steps with the Composio parameter schema so the execution
+    // layer can pass it to the LLM and get correctly-named arguments.
+    for (const step of parsed.steps) {
+      if (step.toolSlug === 'WHATSAPP_SEND_MESSAGE') {
+        // Resolve recipient phone from contacts list at plan time (contacts not available later)
+        if (contacts && contacts.length) {
+          const descLower = step.description.toLowerCase()
+          const matched = contacts.find(c => c.name && descLower.includes(c.name.toLowerCase()))
+          if (matched && matched.phone) {
+            step.waRecipient = { phone: matched.phone, name: matched.name }
+          }
+        }
+      } else if (step.toolSlug && (step.toolSlug.includes('SEND_EMAIL') || step.toolSlug.includes('CREATE_EMAIL_DRAFT') || step.toolSlug.includes('REPLY_EMAIL'))) {
+        // Resolve recipient email from contacts so the LLM cannot hallucinate (e.g. harsh@gmail.com)
+        if (contacts && contacts.length) {
+          const descLower = step.description.toLowerCase()
+          const matched = contacts.find(c => c.name && c.email && descLower.includes(c.name.toLowerCase()))
+          if (matched) {
+            step.emailRecipient = { email: matched.email, name: matched.name }
+          }
+        }
+        const toolDef = filteredExternalTools.find(t => t.slug === step.toolSlug)
+        if (toolDef) {
+          step.toolParameters = toolDef.parameters
+          step.toolDescription = toolDef.description
+        }
+      } else if (step.toolSlug) {
+        const toolDef = filteredExternalTools.find(t => t.slug === step.toolSlug)
+        if (toolDef) {
+          step.toolParameters = toolDef.parameters
+          step.toolDescription = toolDef.description
+        }
+      }
+    }
     console.log(`[PLAN] ${parsed.steps.length} steps: ${parsed.goal}`)
     return { success: true, plan: parsed }
   }

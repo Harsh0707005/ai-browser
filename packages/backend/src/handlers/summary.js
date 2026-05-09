@@ -3,12 +3,20 @@ import { parseJSON } from '../utils/parseJSON.js'
 
 export async function handleSummary(data) {
   const model = data.model || 'gemini'
-  const { userQuery, goal, finalURL, finalPageContext, findings, plan } = data
+  const { userQuery, goal, finalURL, finalPageContext, completedStepsHistory, findings, plan } = data
   const host = finalURL ? (() => { try { return new URL(finalURL).hostname } catch (e) { return finalURL } })() : ''
 
-  const findingsText = Array.isArray(findings) && findings.length
-    ? findings.map(f => `- Step ${f.step}: ${String(f.result || '').trim()}${f.url ? ` (on ${f.url})` : ''}`).join('\n')
-    : '(no explicit findings recorded)'
+  // Build findings from completedStepsHistory if available, fall back to legacy findings array
+  const findingsText = Array.isArray(completedStepsHistory) && completedStepsHistory.length > 0
+    ? completedStepsHistory.map(h => {
+        const actionSummary = Array.isArray(h.actions) && h.actions.length > 0
+          ? ` (${h.actions.length} action${h.actions.length > 1 ? 's' : ''}: ${h.actions.map(a => a.action).join(' → ')})`
+          : ''
+        return `- Step ${h.stepIndex + 1} — ${h.description}${actionSummary}\n  Finding: ${h.finding || '(none)'}`
+      }).join('\n')
+    : Array.isArray(findings) && findings.length
+      ? findings.map(f => `- Step ${f.step}: ${String(f.result || '').trim()}${f.url ? ` (on ${f.url})` : ''}`).join('\n')
+      : '(no findings recorded)'
 
   const planText = plan && Array.isArray(plan.steps)
     ? plan.steps.map(s => `- ${s.step}. ${s.description}`).join('\n')
